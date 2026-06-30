@@ -184,7 +184,6 @@ function isBlockedLead(lead: any) {
   const status = String(lead?.status || "").toLowerCase();
 
   return (
-    lead?.ai_paused === true ||
     lead?.paused === true ||
     BLOCKED_LEAD_STATUSES.includes(status)
   );
