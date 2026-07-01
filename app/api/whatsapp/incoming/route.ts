@@ -494,7 +494,13 @@ async function saveSentMessage(
 }
 
 function getJobIdFromLead(lead: any) {
-  return lead?.current_job_id || lead?.job_id || null;
+  return (
+    lead?.current_job_id ||
+    lead?.job_id ||
+    lead?.ID_do_trabalho_atual ||
+    lead?.id_do_trabalho ||
+    null
+  );
 }
 async function getActiveQueueContext({
   supabase,
@@ -717,10 +723,12 @@ async function buildVariableContext({
   });
 
   const jobId =
-    getJobIdFromLead(lead) ||
-    queueContext?.job_id ||
-    queueContext?.current_job_id ||
-    null;
+  getJobIdFromLead(lead) ||
+  queueContext?.job_id ||
+  queueContext?.current_job_id ||
+  queueContext?.id_do_trabalho ||
+  queueContext?.ID_do_trabalho_atual ||
+  null;
 
   const batchId =
     lead?.batch_id ||
