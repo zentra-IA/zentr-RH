@@ -653,29 +653,29 @@ async function getNextAvailableSlot(
   const now = new Date().toISOString();
 
   async function firstAvailable(query: any) {
-  const { data, error } = await query
-    .in("status", ["available", "disponível", "disponivel"])
-  .not("token", "is", null)
-  .gte("start_at", now)
-  .order("start_at", { ascending: true })
-  .limit(1)
-  .maybeSingle();
+    const { data, error } = await query
+      .in("status", ["available", "disponível", "disponivel"])
+      .not("token", "is", null)
+      .gte("comecar_em", now)
+      .order("comecar_em", { ascending: true })
+      .limit(1)
+      .maybeSingle();
 
-  if (error) {
-    console.error("ERRO BUSCAR SLOT DA VAGA:", error);
-    return null;
+    if (error) {
+      console.error("ERRO BUSCAR SLOT DA VAGA:", error);
+      return null;
+    }
+
+    return data || null;
   }
-
-  return data || null;
-}
 
   if (leadId) {
     const slotByLead = await firstAvailable(
       supabase
         .from("rh_interview_slots")
         .select("*")
-.eq("lead_id", leadId)
-.eq("company_id", companyId)
+        .eq("id_candidato", leadId)
+        .eq("id_da_empresa", companyId)
     );
 
     if (slotByLead) return slotByLead;
@@ -698,8 +698,8 @@ async function getNextAvailableSlot(
       supabase
         .from("rh_interview_slots")
         .select("*")
-        .eq("job_id", jobId)
-.eq("company_id", companyId)
+        .eq("id_do_lote", batchId)
+        .eq("id_da_empresa", companyId)
     );
 
     if (slotByBatch) return slotByBatch;
