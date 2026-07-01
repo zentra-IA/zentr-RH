@@ -234,6 +234,12 @@ export async function POST(req: NextRequest) {
     const title = clean(body.title || body.jobTitle) || jobTitle || "Entrevista";
     const location = clean(body.location) || null;
     const meetingUrl = clean(body.meetingUrl || body.meeting_url) || null;
+    const agendaType =
+      clean(body.agendaType || body.agenda_type) === "shared" ? "shared" : "individual";
+    const maxCandidates =
+      agendaType === "shared"
+        ? Math.max(1, Math.min(500, Number(body.maxCandidates || body.max_candidates || 30)))
+        : 1;
     const recruiterName = clean(body.recruiterName || body.recruiter_name) || null;
     const recruiterPhone = normalizePhone(body.recruiterPhone || body.recruiter_phone);
     const notes = clean(body.notes) || null;
@@ -280,6 +286,9 @@ export async function POST(req: NextRequest) {
       start_at: slot.startAt.toISOString(),
       end_at: slot.endAt.toISOString(),
       status: "available",
+      agenda_type: agendaType,
+      max_candidates: maxCandidates,
+      reserved_count: 0,
       notes,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
@@ -366,6 +375,21 @@ export async function PATCH(req: NextRequest) {
     if (body.location !== undefined) update.location = clean(body.location) || null;
     if (body.meetingUrl !== undefined || body.meeting_url !== undefined) {
       update.meeting_url = clean(body.meetingUrl || body.meeting_url) || null;
+    }
+    if (body.agendaType !== undefined || body.agenda_type !== undefined) {
+      const agendaType =
+        clean(body.agendaType || body.agenda_type) === "shared" ? "shared" : "individual";
+      update.agenda_type = agendaType;
+
+      if (agendaType === "individual") {
+        update.max_candidates = 1;
+      }
+    }
+    if (body.maxCandidates !== undefined || body.max_candidates !== undefined) {
+      update.max_candidates = Math.max(
+        1,
+        Math.min(500, Number(body.maxCandidates || body.max_candidates || 1))
+      );
     }
     if (body.recruiterName !== undefined || body.recruiter_name !== undefined) {
       update.recruiter_name = clean(body.recruiterName || body.recruiter_name) || null;
