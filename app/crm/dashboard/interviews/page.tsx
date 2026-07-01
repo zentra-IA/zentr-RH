@@ -441,6 +441,79 @@ export default function AvailabilityPage() {
     await loadSlots();
   }
 
+  async function updateCandidateStatus(slot: any, person: any, status: string) {
+    const confirmText: Record<string, string> = {
+      approved: `Aprovar ${person?.name || "este candidato"}?`,
+      rejected: `Marcar ${person?.name || "este candidato"} como não aprovado?`,
+      no_show: `Marcar ${person?.name || "este candidato"} como não compareceu?`,
+      reschedule: `Reagendar ${person?.name || "este candidato"}?`,
+    };
+
+    if (!confirm(confirmText[status] || "Atualizar candidato?")) return;
+
+    const interviewId = person?.interview_id || person?.id;
+    const leadId = person?.lead_id || person?.candidate_id || null;
+
+    if (status === "reschedule") {
+      const res = await fetch("/api/rh/interviews/availability", {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        credentials: "include",
+        body: JSON.stringify({
+          id: slot.id,
+          status: getSlotAgendaType(slot) === "shared" ? slot.status : "available",
+          clearReservation: getSlotAgendaType(slot) !== "shared",
+          leadId,
+          interviewId,
+          candidatePhone: person?.phone || null,
+          candidateEmail: person?.email || null,
+        }),
+      });
+
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        alert(data.error || "Erro ao reagendar candidato.");
+        return;
+      }
+
+      await loadSlots();
+      return;
+    }
+
+    if (!interviewId && !leadId) {
+      alert("Não encontrei o ID deste candidato para atualizar. Recarregue a página e tente novamente.");
+      return;
+    }
+
+    const res = await fetch("/api/rh/interviews", {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      credentials: "include",
+      body: JSON.stringify({
+        id: interviewId,
+        leadId,
+        slotId: slot.id,
+        status,
+        candidatePhone: person?.phone || null,
+        candidateEmail: person?.email || null,
+      }),
+    });
+
+    const data = await res.json().catch(() => ({}));
+
+    if (!res.ok) {
+      alert(data.error || "Erro ao atualizar candidato.");
+      return;
+    }
+
+    await loadSlots();
+  }
+
   function toggleSelected(id: string) {
     setSelectedIds((current) =>
       current.includes(id) ? current.filter((item) => item !== id) : [...current, id]
@@ -863,16 +936,50 @@ export default function AvailabilityPage() {
 
                 {attendees.length > 0 && (
                   <div style={styles.attendeesBox}>
-                    <strong>{isShared ? "Agendados neste horário" : "Candidato agendado"}</strong>
-                    {attendees.slice(0, 6).map((person: any, index: number) => (
-                      <div key={person.id || person.lead_id || person.phone || index} style={styles.attendeeLine}>
-                        <span>{person.name || "Candidato"}</span>
-                        <small>{person.phone || person.email || "-"}</small>
-                      </div>
-                    ))}
-                    {attendees.length > 6 && (
-                      <small style={styles.smallText}>+{attendees.length - 6} candidato(s)</small>
-                    )}
+                    <div style={styles.attendeesHeader}>
+                      <strong>{isShared ? "Candidatos agendados" : "Candidato agendado"}</strong>
+                      <span style={styles.attendeesCount}>{attendees.length}</span>
+                    </div>
+
+                    {attendees.map((person: any, index: number) => {
+                      const personStatus = String(person.status || "").toLowerCase();
+
+                      return (
+                        <div key={person.id || person.lead_id || person.phone || index} style={styles.attendeeCard}>
+                          <div style={styles.attendeeInfo}>
+                            <strong>{person.name || "Candidato"}</strong>
+                            <span>{person.phone || "Telefone não informado"}</span>
+                            <span>{person.email || "E-mail não informado"}</span>
+                            {personStatus && (
+                              <small style={styles.smallText}>Status: {statusLabel(personStatus)}</small>
+                            )}
+                          </div>
+
+                          <div style={styles.attendeeActions}>
+                            <button
+                              style={styles.successButton}
+                              onClick={() => updateCandidateStatus(slot, person, "approved")}
+                            >
+                              Aprovar
+                            </button>
+
+                            <button
+                              style={styles.secondaryButton}
+                              onClick={() => updateCandidateStatus(slot, person, "reschedule")}
+                            >
+                              Reagendar
+                            </button>
+
+                            <button
+                              style={styles.dangerButton}
+                              onClick={() => updateCandidateStatus(slot, person, "rejected")}
+                            >
+                              Não aprovado
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
 
@@ -895,7 +1002,7 @@ export default function AvailabilityPage() {
                     Editar
                   </button>
 
-                  {(slot.status === "reserved" || slot.status === "confirmed") && (
+                  {!isShared && (slot.status === "reserved" || slot.status === "confirmed") && (
                     <>
                       <button style={styles.successButton} onClick={() => updateSlotStatus(slot, "approved")}>
                         Aprovado
@@ -1096,7 +1203,12 @@ const styles: Record<string, CSSProperties> = {
   badgeReserved: { border: "1px solid #bbf7d0", background: "#f0fdf4", color: "#15803d", borderRadius: 999, padding: "6px 10px", fontSize: 11, fontWeight: 900, whiteSpace: "nowrap" },
   badgeCancelled: { border: "1px solid #fecaca", background: "#fff1f2", color: "#dc2626", borderRadius: 999, padding: "6px 10px", fontSize: 11, fontWeight: 900, whiteSpace: "nowrap" },
   reservedBox: { border: "1px solid #bbf7d0", background: "#f0fdf4", borderRadius: 14, padding: 12, display: "grid", gap: 4, color: "#166534", fontSize: 13 },
-  attendeesBox: { border: "1px solid #bfdbfe", background: "#eff6ff", borderRadius: 14, padding: 12, display: "grid", gap: 6, color: "#1e3a8a", fontSize: 13 },
+  attendeesBox: { border: "1px solid #bfdbfe", background: "#eff6ff", borderRadius: 14, padding: 12, display: "grid", gap: 10, color: "#1e3a8a", fontSize: 13 },
+  attendeesHeader: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 },
+  attendeesCount: { border: "1px solid #bfdbfe", background: "#fff", color: "#1d4ed8", borderRadius: 999, padding: "3px 8px", fontSize: 11, fontWeight: 900 },
+  attendeeCard: { background: "#fff", border: "1px solid #dbeafe", borderRadius: 14, padding: 12, display: "grid", gap: 10 },
+  attendeeInfo: { display: "grid", gap: 3, color: "#1e3a8a" },
+  attendeeActions: { display: "flex", gap: 8, flexWrap: "wrap" },
   attendeeLine: { display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap", borderTop: "1px solid #dbeafe", paddingTop: 6 },
   info: { display: "grid", gap: 4, color: "#475569", fontSize: 13 },
   actions: { display: "flex", gap: 8, flexWrap: "wrap", marginTop: 4 },
