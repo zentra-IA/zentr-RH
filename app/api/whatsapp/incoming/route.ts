@@ -652,65 +652,43 @@ async function getNextAvailableSlot(
 ) {
   const now = new Date().toISOString();
 
-  async function firstAvailable(query: any) {
-    const { data, error } = await query
-      .in("status", ["available", "disponível", "disponivel"])
-      .not("token", "is", null)
-      .gte("comecar_em", now)
-      .order("comecar_em", { ascending: true })
-      .limit(1)
-      .maybeSingle();
+  const { data, error } = await supabase
+    .from("rh_interview_slots")
+    .select("*")
+    .eq("id_da_empresa", companyId)
+    .in("status", ["available", "disponível", "disponivel"])
+    .not("token", "is", null)
+    .gte("comecar_em", now)
+    .order("comecar_em", { ascending: true })
+    .limit(50);
 
-    if (error) {
-      console.error("ERRO BUSCAR SLOT DA VAGA:", error);
-      return null;
-    }
-
-    return data || null;
+  if (error) {
+    console.error("ERRO BUSCAR SLOTS DISPONIVEIS:", error);
+    return null;
   }
 
-  if (leadId) {
-    const slotByLead = await firstAvailable(
-      supabase
-        .from("rh_interview_slots")
-        .select("*")
-        .eq("id_candidato", leadId)
-        .eq("id_da_empresa", companyId)
-    );
+  const slots = data || [];
 
-    if (slotByLead) return slotByLead;
-  }
+  const slotByJob = slots.find((slot: any) => {
+    return String(slot?.id_do_trabalho || "") === String(jobId || "");
+  });
 
-  if (jobId) {
-    const slotByJob = await firstAvailable(
-      supabase
-        .from("rh_interview_slots")
-        .select("*")
-        .eq("id_do_trabalho", jobId)
-        .eq("id_da_empresa", companyId)
-    );
+  if (slotByJob) return slotByJob;
 
-    if (slotByJob) return slotByJob;
-  }
+  const slotByBatch = slots.find((slot: any) => {
+    return String(slot?.id_do_lote || "") === String(batchId || "");
+  });
 
-  if (batchId) {
-    const slotByBatch = await firstAvailable(
-      supabase
-        .from("rh_interview_slots")
-        .select("*")
-        .eq("id_do_lote", batchId)
-        .eq("id_da_empresa", companyId)
-    );
+  if (slotByBatch) return slotByBatch;
 
-    if (slotByBatch) return slotByBatch;
-  }
-
-  return null;
+  return slots[0] || null;
 }
+  
 
 function publicAgendaLink(slot: any) {
-  if (!slot?.token) return "";
-  return `${APP_URL}/agenda/${slot.token}`;
+  const token = slot?.token || slot?.id;
+  if (!token) return "";
+  return `${APP_URL}/agenda/${token}`;
 }
 
 async function buildVariableContext({
