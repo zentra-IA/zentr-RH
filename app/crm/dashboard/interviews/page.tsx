@@ -451,8 +451,31 @@ export default function AvailabilityPage() {
 
     if (!confirm(confirmText[status] || "Atualizar candidato?")) return;
 
-    const interviewId = person?.interview_id || person?.id;
-    const leadId = person?.lead_id || person?.candidate_id || null;
+    const rawInterviewId = person?.interview_id || person?.interviewId || person?.rh_interview_id || null;
+    const rawPersonId = person?.id || null;
+
+    // Nunca envie ids artificiais como "slot-..." como se fossem entrevista.
+    // Isso era o que fazia a API responder "Entrevista não encontrada".
+    const isUuid = (value: any) =>
+      typeof value === "string" &&
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
+
+    const interviewId = isUuid(rawInterviewId)
+      ? rawInterviewId
+      : isUuid(rawPersonId)
+        ? rawPersonId
+        : null;
+
+    const leadId =
+      isUuid(person?.lead_id)
+        ? person.lead_id
+        : isUuid(person?.leadId)
+          ? person.leadId
+          : isUuid(person?.candidate_id)
+            ? person.candidate_id
+            : isUuid(person?.candidateId)
+              ? person.candidateId
+              : null;
 
     if (status === "reschedule") {
       const res = await fetch("/api/rh/interviews/availability", {

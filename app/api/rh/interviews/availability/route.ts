@@ -377,22 +377,79 @@ async function updateLeadStatusForInterview({
   };
 
   const leadStatus = leadStatusMap[status] || status;
+  const normalizedPhone = normalizePhone(phone);
+  const normalizedEmail = normalizeText(email);
 
-  let query = supabase.from("leads").select("*").eq("company_id", companyId).limit(1);
+  let found: any = null;
 
+  // 1. Caminho mais seguro: por ID real do lead.
   if (leadId) {
-    query = query.eq("id", leadId);
-  } else if (phone) {
-    query = query.eq("phone", normalizePhone(phone));
-  } else if (email) {
-    query = query.eq("email", clean(email));
-  } else {
-    return null;
+    const { data, error } = await supabase
+      .from("leads")
+      .select("*")
+      .eq("company_id", companyId)
+      .eq("id", leadId)
+      .maybeSingle();
+
+    if (error) console.error("FIND LEAD BY ID ERROR:", error);
+    found = data || null;
   }
 
-  const { data: found } = await query.maybeSingle();
+  // 2. Fallback seguro: busca por empresa e filtra em memória.
+  // Evita quebrar se o banco usa phone/celular/telefone/e-mail com nomes diferentes.
+  if (!found && (normalizedPhone || normalizedEmail)) {
+    const { data, error } = await supabase
+      .from("leads")
+      .select("*")
+      .eq("company_id", companyId)
+      .limit(1000);
 
-  if (!found?.id) return null;
+    if (error) {
+      console.error("FIND LEADS FALLBACK ERROR:", error);
+    }
+
+    found =
+      (data || []).find((item: any) => {
+        const phones = [
+          item.phone,
+          item.telefone,
+          item.celular,
+          item.whatsapp,
+          item.remote_jid,
+          item.remoteJid,
+        ]
+          .map(normalizePhone)
+          .filter(Boolean);
+
+        const emails = [
+          item.email,
+          item.e_mail,
+          item["e-mail"],
+          item.candidate_email,
+        ]
+          .map(normalizeText)
+          .filter(Boolean);
+
+        const samePhone = normalizedPhone && phones.includes(normalizedPhone);
+        const sameEmail = normalizedEmail && emails.includes(normalizedEmail);
+
+        return samePhone || sameEmail;
+      }) || null;
+  }
+
+  if (!found?.id) {
+    console.warn("LEAD NAO ENCONTRADO PARA STATUS DE ENTREVISTA:", {
+      companyId,
+      leadId,
+      phone,
+      normalizedPhone,
+      email,
+      normalizedEmail,
+      status,
+      jobId,
+    });
+    return null;
+  }
 
   const { data, error } = await supabase
     .from("leads")
@@ -427,7 +484,10 @@ async function updateCandidateInterviewStatus({
   body: any;
 }) {
   const status = clean(body.status);
-  const interviewId = clean(body.interviewId || body.interview_id);
+  const rawInterviewId = clean(body.interviewId || body.interview_id);
+  const isUuid = (value: string) =>
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
+  const interviewId = rawInterviewId && isUuid(rawInterviewId) ? rawInterviewId : "";
   const leadId = clean(body.leadId || body.lead_id);
   const phone = normalizePhone(body.candidatePhone || body.phone);
   const email = clean(body.candidateEmail || body.email);
@@ -528,9 +588,19 @@ async function updateCandidateInterviewStatus({
   });
 
   if (!interview?.id && !lead?.id) {
+    console.warn("CANDIDATO SEM ENTREVISTA/LEAD VINCULADO, ACAO NAO BLOQUEADA:", {
+      companyId,
+      slotId: slot?.id,
+      phone,
+      email,
+      status,
+    });
+
     return {
-      error: "Não encontrei esse candidato nos agendados. Atualize a página e tente novamente.",
-      statusCode: 404,
+      success: true,
+      warning: "Candidato não estava vinculado a uma entrevista/lead. A ação não foi bloqueada.",
+      interview: null,
+      lead: null,
     };
   }
 
