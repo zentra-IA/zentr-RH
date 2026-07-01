@@ -567,11 +567,11 @@ async function getJobContext(supabase: any, companyId: string, jobId?: string | 
   for (const table of tables) {
     try {
       const { data, error } = await supabase
-        .from(table)
-        .select("*")
-        .eq("company_id", companyId)
-        .eq("id", jobId)
-        .maybeSingle();
+  .from(table)
+  .select("*")
+  .eq("job_id", jobId)
+.eq("company_id", companyId)
+  .maybeSingle();
 
       if (!error && data) return data;
     } catch {}
@@ -655,11 +655,11 @@ async function getNextAvailableSlot(
   async function firstAvailable(query: any) {
   const { data, error } = await query
     .in("status", ["available", "disponível", "disponivel"])
-    .not("token", "is", null)
-    .gte("começar_em", new Date().toISOString())
-    .order("começar_em", { ascending: true })
-    .limit(1)
-    .maybeSingle();
+  .not("token", "is", null)
+  .gte("start_at", now)
+  .order("start_at", { ascending: true })
+  .limit(1)
+  .maybeSingle();
 
   if (error) {
     console.error("ERRO BUSCAR SLOT DA VAGA:", error);
@@ -674,8 +674,8 @@ async function getNextAvailableSlot(
       supabase
         .from("rh_interview_slots")
         .select("*")
-        .eq("lead_id", leadId)
-        .eq("id_da_empresa", companyId)
+.eq("lead_id", leadId)
+.eq("company_id", companyId)
     );
 
     if (slotByLead) return slotByLead;
@@ -698,8 +698,8 @@ async function getNextAvailableSlot(
       supabase
         .from("rh_interview_slots")
         .select("*")
-        .eq("batch_id", batchId)
-        .eq("id_da_empresa", companyId)
+        .eq("job_id", jobId)
+.eq("company_id", companyId)
     );
 
     if (slotByBatch) return slotByBatch;
