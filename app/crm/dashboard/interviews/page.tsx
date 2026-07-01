@@ -191,7 +191,7 @@ export default function AvailabilityPage() {
           <p style={styles.kicker}>Zentra RH</p>
           <h1 style={styles.title}>Disponibilidade de entrevistas</h1>
           <p style={styles.subtitle}>
-            Crie horários disponíveis para candidatos escolherem. Quando um horário é reservado, ele desaparece da agenda pública.
+            Crie horários disponíveis para candidatos escolherem. Crie horários individuais ou compartilhados por vaga. Na agenda compartilhada, vários candidatos podem confirmar o mesmo horário.
           </p>
         </div>
 
@@ -211,6 +211,8 @@ export default function AvailabilityPage() {
         <h2 style={styles.sectionTitle}>Gerar horários</h2>
 
         <div style={styles.formGrid}>
+          <input style={styles.input} placeholder="Título da agenda (opcional)" value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} />
+
           <select
             style={styles.input}
             value={form.jobId}
@@ -230,8 +232,6 @@ export default function AvailabilityPage() {
               </option>
             ))}
           </select>
-
-          <input style={styles.input} placeholder="Título da agenda (opcional)" value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} />
           <input type="date" style={styles.input} value={form.date} onChange={(event) => setForm({ ...form, date: event.target.value })} />
           <input type="time" style={styles.input} value={form.startTime} onChange={(event) => setForm({ ...form, startTime: event.target.value })} />
           <input type="time" style={styles.input} value={form.endTime} onChange={(event) => setForm({ ...form, endTime: event.target.value })} />
