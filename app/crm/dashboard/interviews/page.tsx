@@ -27,6 +27,7 @@ function agendaLink(token: string) {
 
 export default function AvailabilityPage() {
   const [slots, setSlots] = useState<any[]>([]);
+  const [jobs, setJobs] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
@@ -36,6 +37,7 @@ export default function AvailabilityPage() {
 
   const [form, setForm] = useState({
     mode: "range",
+    jobId: "",
     date: today(),
     startTime: "09:00",
     endTime: "17:00",
@@ -49,6 +51,40 @@ export default function AvailabilityPage() {
     recruiterPhone: "",
     notes: "",
   });
+
+
+  async function loadJobs() {
+    try {
+      const res = await fetch("/api/rh/jobs", {
+        cache: "no-store",
+        credentials: "include",
+      });
+
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        console.warn("Erro ao carregar vagas:", data);
+        return;
+      }
+
+      const list = Array.isArray(data)
+        ? data
+        : data.jobs || data.data || data.items || [];
+
+      setJobs(list);
+    } catch (error) {
+      console.warn("Erro ao carregar vagas:", error);
+    }
+  }
+
+  function jobLabel(job: any) {
+    const title = job.title || job.name || job.cargo || "Vaga sem título";
+    const city = job.city || job.cidade || "";
+    const state = job.state || job.uf || job.estado || "";
+    const place = [city, state].filter(Boolean).join(" / ");
+
+    return place ? `${title} - ${place}` : title;
+  }
 
   async function loadSlots() {
     try {
@@ -79,6 +115,7 @@ export default function AvailabilityPage() {
   }
 
   useEffect(() => {
+    loadJobs();
     loadSlots();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -93,6 +130,11 @@ export default function AvailabilityPage() {
   }, [slots]);
 
   async function createSlots() {
+    if (!form.jobId) {
+      alert("Selecione uma vaga para vincular a agenda.");
+      return;
+    }
+
     setSaving(true);
 
     try {
@@ -102,11 +144,7 @@ export default function AvailabilityPage() {
           "Content-Type": "application/json",
         },
         credentials: "include",
-        body: JSON.stringify({
-          ...form,
-          agendaType: form.agendaType,
-          maxCandidates: Number(form.maxCandidates || 1),
-        }),
+        body: JSON.stringify(form),
       });
 
       const data = await res.json().catch(() => ({}));
@@ -153,7 +191,7 @@ export default function AvailabilityPage() {
           <p style={styles.kicker}>Zentra RH</p>
           <h1 style={styles.title}>Disponibilidade de entrevistas</h1>
           <p style={styles.subtitle}>
-            Crie horários individuais ou compartilhados para candidatos escolherem. Na agenda compartilhada, vários candidatos podem confirmar o mesmo horário.
+            Crie horários disponíveis para candidatos escolherem. Quando um horário é reservado, ele desaparece da agenda pública.
           </p>
         </div>
 
@@ -173,7 +211,27 @@ export default function AvailabilityPage() {
         <h2 style={styles.sectionTitle}>Gerar horários</h2>
 
         <div style={styles.formGrid}>
-          <input style={styles.input} placeholder="Título/Vaga" value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} />
+          <select
+            style={styles.input}
+            value={form.jobId}
+            onChange={(event) => {
+              const selectedJob = jobs.find((job) => String(job.id) === String(event.target.value));
+              setForm({
+                ...form,
+                jobId: event.target.value,
+                title: selectedJob ? jobLabel(selectedJob) : form.title,
+              });
+            }}
+          >
+            <option value="">Selecione a vaga vinculada</option>
+            {jobs.map((job) => (
+              <option key={job.id} value={job.id}>
+                {jobLabel(job)}
+              </option>
+            ))}
+          </select>
+
+          <input style={styles.input} placeholder="Título da agenda (opcional)" value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} />
           <input type="date" style={styles.input} value={form.date} onChange={(event) => setForm({ ...form, date: event.target.value })} />
           <input type="time" style={styles.input} value={form.startTime} onChange={(event) => setForm({ ...form, startTime: event.target.value })} />
           <input type="time" style={styles.input} value={form.endTime} onChange={(event) => setForm({ ...form, endTime: event.target.value })} />
@@ -205,8 +263,8 @@ export default function AvailabilityPage() {
           {form.agendaType === "shared" && (
             <input
               type="number"
-              min="1"
-              max="200"
+              min={1}
+              max={300}
               style={styles.input}
               placeholder="Máximo de candidatos no mesmo horário"
               value={form.maxCandidates}
@@ -218,7 +276,6 @@ export default function AvailabilityPage() {
               }
             />
           )}
-
           <input style={styles.input} placeholder="Recrutador responsável" value={form.recruiterName} onChange={(event) => setForm({ ...form, recruiterName: event.target.value })} />
           <input style={styles.input} placeholder="WhatsApp do recrutador" value={form.recruiterPhone} onChange={(event) => setForm({ ...form, recruiterPhone: event.target.value })} />
 
@@ -263,13 +320,7 @@ export default function AvailabilityPage() {
                 </div>
 
                 <span style={slot.status === "reserved" ? styles.badgeReserved : slot.status === "cancelled" ? styles.badgeCancelled : styles.badge}>
-                  {slot.agenda_type === "shared" && slot.status === "available"
-                    ? "Compartilhada"
-                    : slot.status === "available"
-                      ? "Disponível"
-                      : slot.status === "reserved"
-                        ? "Reservado"
-                        : "Cancelado"}
+                  {slot.status === "available" ? "Disponível" : slot.status === "reserved" ? "Reservado" : "Cancelado"}
                 </span>
               </div>
 
@@ -282,13 +333,14 @@ export default function AvailabilityPage() {
               )}
 
               <div style={styles.info}>
-                {slot.location && <span>Local: {slot.location}</span>}
-                {slot.meeting_url && <span>Link: {slot.meeting_url}</span>}
-                {slot.agenda_type === "shared" && (
+                {(slot.job_id || slot.id_do_trabalho) && <span>Vaga vinculada: {slot.job_id || slot.id_do_trabalho}</span>}
+                {(slot.agenda_type || slot.agendaType) === "shared" && (
                   <span>
-                    Agenda compartilhada: {slot.reserved_count || 0}/{slot.max_candidates || 1} candidatos
+                    Agenda compartilhada: {slot.reserved_count || 0}/{slot.max_candidates || 1} confirmados
                   </span>
                 )}
+                {slot.location && <span>Local: {slot.location}</span>}
+                {slot.meeting_url && <span>Link: {slot.meeting_url}</span>}
                 {slot.recruiter_name && <span>Recrutador: {slot.recruiter_name}</span>}
                 {slot.recruiter_phone && <span>WhatsApp recrutador: {slot.recruiter_phone}</span>}
               </div>
