@@ -414,14 +414,14 @@ export async function PATCH(req: NextRequest) {
 
     if (data.status) {
       const statusMap: Record<string, string> = {
-        scheduled: "entrevista",
-        confirmed: "entrevista",
-        done: "entrevista_realizada",
-        no_show: "nao_compareceu",
-        approved: "aprovado",
-        rejected: "reprovado",
-        hired: "contratado",
-      };
+  scheduled: "entrevista",
+  confirmed: "entrevista",
+  done: "entrevista_realizada",
+  no_show: "nao_compareceu",
+  approved: "contratado",
+  rejected: "reprovado",
+  hired: "contratado",
+};
 
       const candidateStatus = statusMap[data.status];
 
@@ -448,16 +448,16 @@ export async function PATCH(req: NextRequest) {
             company_id: companyId,
           },
           data: {
-            stage:
-              data.status === "approved"
-                ? "aprovado"
-                : data.status === "hired"
-                  ? "contratado"
-                  : data.status === "no_show"
-                    ? "nao_compareceu"
-                    : data.status === "done"
-                      ? "entrevistado"
-                      : "reprovado",
+  stage:
+    data.status === "approved"
+      ? "contratado"
+      : data.status === "hired"
+        ? "contratado"
+        : data.status === "no_show"
+          ? "nao_compareceu"
+          : data.status === "done"
+            ? "entrevistado"
+            : "reprovado",
             status:
               data.status === "rejected"
                 ? "rejected"
