@@ -210,7 +210,108 @@ export async function GET(req: NextRequest) {
     const { data, error } = await query;
     if (error) throw new Error(error.message);
 
-    return NextResponse.json({ success: true, slots: data || [] });
+    const slots = data || [];
+
+    // Agenda compartilhada:
+    // o slot permanece o mesmo para vários candidatos. Para o painel mostrar
+    // quem já confirmou, buscamos as entrevistas geradas pelo book/route.ts
+    // e anexamos cada candidato ao respectivo horário.
+    let interviews: any[] = [];
+
+    if (slots.length) {
+      const { data: interviewData, error: interviewError } = await supabase
+        .from("rh_interviews")
+        .select(
+          "id, lead_id, candidate_id, job_id, batch_id, candidate_name, candidate_phone, candidate_email, status, start_at, end_at, notes, created_at"
+        )
+        .eq("company_id", companyId)
+        .order("created_at", { ascending: false })
+        .limit(5000);
+
+      if (interviewError) {
+        console.warn("AVISO: não foi possível carregar candidatos confirmados:", interviewError);
+      } else {
+        interviews = interviewData || [];
+      }
+    }
+
+    function sameDateTime(a?: string | null, b?: string | null) {
+      if (!a || !b) return false;
+      const da = new Date(a).getTime();
+      const db = new Date(b).getTime();
+      if (Number.isNaN(da) || Number.isNaN(db)) return false;
+      return da === db;
+    }
+
+    function interviewBelongsToSlot(interview: any, slot: any) {
+      const notes = String(interview.notes || "");
+      if (slot.id && notes.includes(`Slot: ${slot.id}`)) return true;
+
+      const sameStart = sameDateTime(interview.start_at, slot.start_at);
+      const sameJob =
+        !slot.job_id ||
+        !interview.job_id ||
+        String(interview.job_id) === String(slot.job_id);
+
+      return sameStart && sameJob;
+    }
+
+    const slotsWithAttendees = slots.map((slot: any) => {
+      const attendeesMap = new Map<string, any>();
+
+      for (const interview of interviews) {
+        if (!interviewBelongsToSlot(interview, slot)) continue;
+
+        const key =
+          interview.lead_id ||
+          interview.candidate_id ||
+          interview.candidate_phone ||
+          interview.candidate_email ||
+          interview.id;
+
+        if (!attendeesMap.has(String(key))) {
+          attendeesMap.set(String(key), {
+            id: interview.id,
+            lead_id: interview.lead_id,
+            candidate_id: interview.candidate_id,
+            name: interview.candidate_name || "Candidato",
+            phone: interview.candidate_phone || null,
+            email: interview.candidate_email || null,
+            status: interview.status || null,
+            created_at: interview.created_at || null,
+          });
+        }
+      }
+
+      if (slot.reserved_name || slot.reserved_phone || slot.reserved_email) {
+        const key = slot.lead_id || slot.reserved_phone || slot.reserved_email || "reserved";
+        if (!attendeesMap.has(String(key))) {
+          attendeesMap.set(String(key), {
+            id: slot.lead_id || null,
+            lead_id: slot.lead_id || null,
+            name: slot.reserved_name || "Candidato",
+            phone: slot.reserved_phone || null,
+            email: slot.reserved_email || null,
+            status: slot.status || null,
+            created_at: slot.reserved_at || null,
+          });
+        }
+      }
+
+      const attendees = Array.from(attendeesMap.values());
+      const agendaType = clean(slot.agenda_type || slot.agendaType) || "individual";
+      const reservedCount = Math.max(Number(slot.reserved_count || 0), attendees.length);
+
+      return {
+        ...slot,
+        attendees,
+        confirmed_candidates: attendees,
+        confirmed_candidates_count: reservedCount,
+        reserved_count: agendaType === "shared" ? reservedCount : slot.reserved_count,
+      };
+    });
+
+    return NextResponse.json({ success: true, slots: slotsWithAttendees });
   } catch (error: any) {
     console.error("GET /api/rh/interviews/availability:", error);
     return NextResponse.json(

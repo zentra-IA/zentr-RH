@@ -65,6 +65,21 @@ function getSlotAgendaType(slot: any) {
   return slot.agenda_type || slot.agendaType || "individual";
 }
 
+function getSlotAttendees(slot: any) {
+  if (Array.isArray(slot.attendees)) return slot.attendees;
+  if (Array.isArray(slot.confirmed_candidates)) return slot.confirmed_candidates;
+  return [];
+}
+
+function getConfirmedCount(slot: any) {
+  const attendees = getSlotAttendees(slot);
+  const reservedCount = Number(slot.reserved_count || slot.reservedCount || 0);
+  if (getSlotAgendaType(slot) === "shared") {
+    return Math.max(reservedCount, attendees.length);
+  }
+  return attendees.length || (slot.reserved_name ? 1 : 0);
+}
+
 export default function AvailabilityPage() {
   const [slots, setSlots] = useState<any[]>([]);
   const [jobs, setJobs] = useState<any[]>([]);
@@ -791,6 +806,8 @@ export default function AvailabilityPage() {
           {visibleSlots.map((slot) => {
             const slotJobId = getSlotJobId(slot);
             const isShared = getSlotAgendaType(slot) === "shared";
+            const attendees = getSlotAttendees(slot);
+            const confirmedCount = getConfirmedCount(slot);
 
             return (
               <article key={slot.id} style={styles.slotCard}>
@@ -835,7 +852,7 @@ export default function AvailabilityPage() {
                   <span>Tipo: {isShared ? "Compartilhada por lote" : "Individual"}</span>
                   {isShared && (
                     <span>
-                      Confirmados: {slot.reserved_count || 0}/{slot.max_candidates || 1}
+                      Confirmados: {confirmedCount}/{slot.max_candidates || 1}
                     </span>
                   )}
                   {slot.location && <span>Local: {slot.location}</span>}
@@ -843,6 +860,21 @@ export default function AvailabilityPage() {
                   {slot.recruiter_name && <span>Recrutador: {slot.recruiter_name}</span>}
                   {slot.recruiter_phone && <span>WhatsApp recrutador: {slot.recruiter_phone}</span>}
                 </div>
+
+                {attendees.length > 0 && (
+                  <div style={styles.attendeesBox}>
+                    <strong>{isShared ? "Agendados neste horário" : "Candidato agendado"}</strong>
+                    {attendees.slice(0, 6).map((person: any, index: number) => (
+                      <div key={person.id || person.lead_id || person.phone || index} style={styles.attendeeLine}>
+                        <span>{person.name || "Candidato"}</span>
+                        <small>{person.phone || person.email || "-"}</small>
+                      </div>
+                    ))}
+                    {attendees.length > 6 && (
+                      <small style={styles.smallText}>+{attendees.length - 6} candidato(s)</small>
+                    )}
+                  </div>
+                )}
 
                 <div style={styles.actions}>
                   <button
@@ -1064,6 +1096,8 @@ const styles: Record<string, CSSProperties> = {
   badgeReserved: { border: "1px solid #bbf7d0", background: "#f0fdf4", color: "#15803d", borderRadius: 999, padding: "6px 10px", fontSize: 11, fontWeight: 900, whiteSpace: "nowrap" },
   badgeCancelled: { border: "1px solid #fecaca", background: "#fff1f2", color: "#dc2626", borderRadius: 999, padding: "6px 10px", fontSize: 11, fontWeight: 900, whiteSpace: "nowrap" },
   reservedBox: { border: "1px solid #bbf7d0", background: "#f0fdf4", borderRadius: 14, padding: 12, display: "grid", gap: 4, color: "#166534", fontSize: 13 },
+  attendeesBox: { border: "1px solid #bfdbfe", background: "#eff6ff", borderRadius: 14, padding: 12, display: "grid", gap: 6, color: "#1e3a8a", fontSize: 13 },
+  attendeeLine: { display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap", borderTop: "1px solid #dbeafe", paddingTop: 6 },
   info: { display: "grid", gap: 4, color: "#475569", fontSize: 13 },
   actions: { display: "flex", gap: 8, flexWrap: "wrap", marginTop: 4 },
   primarySmallButton: { border: 0, borderRadius: 14, padding: "10px 12px", background: "#2563eb", color: "#fff", fontWeight: 900, cursor: "pointer" },

@@ -56,6 +56,12 @@ export default function PublicAgendaPage() {
   const [booking, setBooking] = useState(false);
   const [done, setDone] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
+  const [requiresCandidateData, setRequiresCandidateData] = useState(false);
+  const [candidateForm, setCandidateForm] = useState({
+    name: "",
+    phone: "",
+    email: "",
+  });
 
   async function loadAgenda() {
     try {
@@ -75,6 +81,7 @@ export default function PublicAgendaPage() {
 
       setBaseSlot(data.baseSlot || null);
       setLead(data.lead || null);
+      setRequiresCandidateData(Boolean(data.requiresCandidateData));
       setSlots(data.slots || []);
 
       const firstAvailable = (data.slots || [])[0];
@@ -106,6 +113,20 @@ export default function PublicAgendaPage() {
       return;
     }
 
+    if (requiresCandidateData && !lead?.id) {
+      const hasPhoneOrEmail = candidateForm.phone.trim() || candidateForm.email.trim();
+
+      if (!candidateForm.name.trim()) {
+        alert("Informe seu nome para confirmar o horário.");
+        return;
+      }
+
+      if (!hasPhoneOrEmail) {
+        alert("Informe seu WhatsApp ou e-mail para identificarmos seu cadastro.");
+        return;
+      }
+    }
+
     setBooking(true);
 
     try {
@@ -118,6 +139,9 @@ export default function PublicAgendaPage() {
           selectedToken,
           contextToken: token,
           leadId: lead?.id || baseSlot?.lead_id || null,
+          name: candidateForm.name,
+          phone: candidateForm.phone,
+          email: candidateForm.email,
         }),
       });
 
@@ -229,6 +253,44 @@ export default function PublicAgendaPage() {
             </div>
           ))}
         </div>
+
+        {requiresCandidateData && !lead?.id && (
+          <div style={styles.candidateBox}>
+            <strong>Identificação do candidato</strong>
+            <p style={styles.candidateHelp}>
+              Esta agenda é compartilhada. Informe seus dados para confirmarmos o horário no seu cadastro.
+            </p>
+
+            <div style={styles.candidateGrid}>
+              <input
+                style={styles.input}
+                placeholder="Seu nome"
+                value={candidateForm.name}
+                onChange={(event) =>
+                  setCandidateForm({ ...candidateForm, name: event.target.value })
+                }
+              />
+
+              <input
+                style={styles.input}
+                placeholder="WhatsApp com DDD"
+                value={candidateForm.phone}
+                onChange={(event) =>
+                  setCandidateForm({ ...candidateForm, phone: event.target.value })
+                }
+              />
+
+              <input
+                style={styles.input}
+                placeholder="E-mail"
+                value={candidateForm.email}
+                onChange={(event) =>
+                  setCandidateForm({ ...candidateForm, email: event.target.value })
+                }
+              />
+            </div>
+          </div>
+        )}
 
         {selectedSlot && (
           <div style={styles.selectedBox}>
@@ -365,6 +427,36 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 18,
     padding: 14,
     fontSize: 14,
+  },
+  candidateBox: {
+    marginTop: 18,
+    border: "1px solid #bfdbfe",
+    background: "#f8fafc",
+    borderRadius: 20,
+    padding: 16,
+    color: "#334155",
+  },
+  candidateHelp: {
+    margin: "6px 0 14px",
+    color: "#64748b",
+    fontSize: 13,
+    lineHeight: 1.5,
+  },
+  candidateGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+    gap: 10,
+  },
+  input: {
+    width: "100%",
+    border: "1px solid #bfdbfe",
+    background: "#fff",
+    borderRadius: 16,
+    padding: "13px 14px",
+    color: "#0f172a",
+    outline: "none",
+    fontSize: 14,
+    boxSizing: "border-box",
   },
   primaryButton: {
     marginTop: 18,

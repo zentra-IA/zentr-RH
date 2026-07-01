@@ -521,17 +521,30 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "Agenda não encontrada." }, { status: 404 });
     }
 
-    let lead = slot.lead_id
-      ? await getLeadById(supabase, slot.company_id, slot.lead_id)
-      : null;
+    const agendaType = clean(slot.agenda_type || slot.agendaType) || "individual";
+    const isSharedAgenda = agendaType === "shared";
 
-    if (!lead?.id) {
-      lead = await findLeadFromQueueContext({
-        supabase,
-        companyId: slot.company_id,
-        jobId: slot.job_id,
-        batchId: slot.batch_id,
-      });
+    let lead = null;
+
+    // Agenda individual mantém o comportamento antigo:
+    // tenta identificar o candidato automaticamente pelo slot/link.
+    //
+    // Agenda compartilhada NÃO deve usar fallback da fila,
+    // porque o mesmo link é enviado para vários candidatos.
+    // Nesse caso a página pública pede telefone/e-mail para identificar o candidato no POST.
+    if (!isSharedAgenda) {
+      lead = slot.lead_id
+        ? await getLeadById(supabase, slot.company_id, slot.lead_id)
+        : null;
+
+      if (!lead?.id) {
+        lead = await findLeadFromQueueContext({
+          supabase,
+          companyId: slot.company_id,
+          jobId: slot.job_id,
+          batchId: slot.batch_id,
+        });
+      }
     }
 
     const from = new Date();
@@ -542,7 +555,7 @@ export async function GET(req: NextRequest) {
       .from("rh_interview_slots")
       .select("*")
       .eq("company_id", slot.company_id)
-      .eq("status", "available")
+      .in("status", ["available", "reserved"])
       .gte("start_at", from.toISOString())
       .lte("start_at", to.toISOString())
       .order("start_at", { ascending: true })
@@ -550,13 +563,35 @@ export async function GET(req: NextRequest) {
 
     if (slot.job_id) query = query.eq("job_id", slot.job_id);
 
-    const { data: available, error: availableError } = await query;
+    const { data: rawSlots, error: availableError } = await query;
 
     if (availableError) throw new Error(availableError.message);
 
+    const available = (rawSlots || []).filter((item: any) => {
+      const itemAgendaType = clean(item.agenda_type || item.agendaType) || "individual";
+      const itemIsShared = itemAgendaType === "shared";
+      const itemStatus = clean(item.status).toLowerCase();
+
+      if (itemIsShared) {
+        const maxCandidates = Math.max(
+          1,
+          Number(item.max_candidates || item.maxCandidates || 1)
+        );
+        const reservedCount = Math.max(
+          0,
+          Number(item.reserved_count || item.reservedCount || 0)
+        );
+
+        return reservedCount < maxCandidates;
+      }
+
+      return itemStatus === "available";
+    });
+
     return NextResponse.json({
       success: true,
-      requiresCandidateData: false,
+      requiresCandidateData: isSharedAgenda && !lead?.id,
+      agendaType,
       baseSlot: slot,
       lead: lead
         ? {
@@ -630,7 +665,9 @@ export async function POST(req: NextRequest) {
       Number(currentSlot.reserved_count || currentSlot.reservedCount || 0)
     );
 
-    if (currentSlot.status !== "available") {
+    const currentStatus = clean(currentSlot.status).toLowerCase();
+
+    if (!isSharedAgenda && currentStatus !== "available") {
       return NextResponse.json(
         {
           error: "Este horário já foi reservado. Escolha outro horário.",
@@ -707,11 +744,16 @@ export async function POST(req: NextRequest) {
       updatedLead.batch_id ||
       null;
 
-    const { data: slot, error } = await supabase
+    let reserveQuery = supabase
       .from("rh_interview_slots")
       .update(reservationPayload)
-      .eq("id", currentSlot.id)
-      .eq("status", "available")
+      .eq("id", currentSlot.id);
+
+    if (!isSharedAgenda) {
+      reserveQuery = reserveQuery.eq("status", "available");
+    }
+
+    const { data: slot, error } = await reserveQuery
       .select("*")
       .single();
 
