@@ -653,44 +653,55 @@ async function getNextAvailableSlot(
   const now = new Date().toISOString();
 
   async function firstAvailable(query: any) {
-    const { data, error } = await query
-      .eq("company_id", companyId)
-      .eq("status", "available")
-      .not("token", "is", null)
-      .gte("start_at", now)
-      .order("start_at", { ascending: true })
-      .limit(1)
-      .maybeSingle();
+  const { data, error } = await query
+    .in("status", ["available", "disponível", "disponivel"])
+    .not("token", "is", null)
+    .gte("começar_em", new Date().toISOString())
+    .order("começar_em", { ascending: true })
+    .limit(1)
+    .maybeSingle();
 
-    if (error) {
-      console.error("ERRO BUSCAR SLOT DA VAGA:", error);
-      return null;
-    }
-
-    return data || null;
+  if (error) {
+    console.error("ERRO BUSCAR SLOT DA VAGA:", error);
+    return null;
   }
 
-  // 1) Slot vinculado diretamente ao lead, se existir.
+  return data || null;
+}
+
   if (leadId) {
     const slotByLead = await firstAvailable(
-      supabase.from("rh_interview_slots").select("*").eq("lead_id", leadId)
+      supabase
+        .from("rh_interview_slots")
+        .select("*")
+        .eq("lead_id", leadId)
+        .eq("id_da_empresa", companyId)
     );
+
     if (slotByLead) return slotByLead;
   }
 
-  // 2) Slot da vaga do lote.
   if (jobId) {
     const slotByJob = await firstAvailable(
-      supabase.from("rh_interview_slots").select("*").eq("job_id", jobId)
+      supabase
+        .from("rh_interview_slots")
+        .select("*")
+        .eq("id_do_trabalho", jobId)
+        .eq("id_da_empresa", companyId)
     );
+
     if (slotByJob) return slotByJob;
   }
 
-  // 3) Slot do batch/lote, se a tabela tiver batch_id preenchido.
   if (batchId) {
     const slotByBatch = await firstAvailable(
-      supabase.from("rh_interview_slots").select("*").eq("batch_id", batchId)
+      supabase
+        .from("rh_interview_slots")
+        .select("*")
+        .eq("batch_id", batchId)
+        .eq("id_da_empresa", companyId)
     );
+
     if (slotByBatch) return slotByBatch;
   }
 
@@ -772,7 +783,7 @@ async function buildVariableContext({
     slot,
     jobTitle,
     scheduleLink,
-    interviewDate: formatDateTime(slot?.start_at),
+    interviewDate: formatDateTime(slot?.começar_em || slot?.start_at),
     companyName: process.env.RH_COMPANY_NAME || process.env.COMPANY_NAME || "Zentra RH",
     city: job?.city || job?.location_city || "",
     state: job?.state || job?.location_state || "",
