@@ -1,14 +1,15 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import type { CSSProperties } from "react";
 
 function today() {
   return new Date().toISOString().slice(0, 10);
 }
 
-function formatDate(value: string) {
+function formatDate(value?: string | null) {
+  if (!value) return "-";
   const date = new Date(value);
-
   if (Number.isNaN(date.getTime())) return "-";
 
   return date.toLocaleString("pt-BR", {
@@ -20,9 +21,48 @@ function formatDate(value: string) {
   });
 }
 
+function formatOnlyDate(value?: string | null) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toISOString().slice(0, 10);
+}
+
+function toDateTimeLocal(value?: string | null) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const offset = date.getTimezoneOffset();
+  const local = new Date(date.getTime() - offset * 60 * 1000);
+  return local.toISOString().slice(0, 16);
+}
+
 function agendaLink(token: string) {
+  if (!token) return "";
   if (typeof window === "undefined") return `/agenda/${token}`;
   return `${window.location.origin}/agenda/${token}`;
+}
+
+function statusLabel(status?: string) {
+  const map: Record<string, string> = {
+    available: "Disponível",
+    reserved: "Reservado",
+    cancelled: "Cancelado",
+    confirmed: "Confirmado",
+    approved: "Aprovado",
+    rejected: "Reprovado",
+    no_show: "Não compareceu",
+  };
+
+  return map[String(status || "")] || status || "-";
+}
+
+function getSlotJobId(slot: any) {
+  return slot.job_id || slot.id_do_trabalho || "";
+}
+
+function getSlotAgendaType(slot: any) {
+  return slot.agenda_type || slot.agendaType || "individual";
 }
 
 export default function AvailabilityPage() {
@@ -33,6 +73,9 @@ export default function AvailabilityPage() {
 
   const [filters, setFilters] = useState({
     status: "all",
+    jobId: "",
+    date: "",
+    search: "",
   });
 
   const [form, setForm] = useState({
@@ -41,6 +84,7 @@ export default function AvailabilityPage() {
     date: today(),
     startTime: "09:00",
     endTime: "17:00",
+    manualTime: "09:00",
     duration: "30",
     title: "",
     location: "",
@@ -52,6 +96,19 @@ export default function AvailabilityPage() {
     notes: "",
   });
 
+  const [editingSlot, setEditingSlot] = useState<any | null>(null);
+  const [editForm, setEditForm] = useState({
+    jobId: "",
+    title: "",
+    status: "available",
+    location: "",
+    meetingUrl: "",
+    agendaType: "individual",
+    maxCandidates: "1",
+    recruiterName: "",
+    recruiterPhone: "",
+    notes: "",
+  });
 
   async function loadJobs() {
     try {
@@ -78,12 +135,18 @@ export default function AvailabilityPage() {
   }
 
   function jobLabel(job: any) {
-    const title = job.title || job.name || job.cargo || "Vaga sem título";
+    const title = job.title || job.titulo || job.name || job.cargo || "Vaga sem título";
     const city = job.city || job.cidade || "";
     const state = job.state || job.uf || job.estado || "";
     const place = [city, state].filter(Boolean).join(" / ");
 
     return place ? `${title} - ${place}` : title;
+  }
+
+  function jobNameById(jobId?: string | null) {
+    if (!jobId) return "";
+    const job = jobs.find((item) => String(item.id) === String(jobId));
+    return job ? jobLabel(job) : String(jobId);
   }
 
   async function loadSlots() {
@@ -94,6 +157,10 @@ export default function AvailabilityPage() {
 
       if (filters.status !== "all") {
         params.set("status", filters.status);
+      }
+
+      if (filters.jobId) {
+        params.set("jobId", filters.jobId);
       }
 
       const res = await fetch(`/api/rh/interviews/availability?${params}`, {
@@ -120,14 +187,48 @@ export default function AvailabilityPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const visibleSlots = useMemo(() => {
+    const search = filters.search.trim().toLowerCase();
+
+    return slots.filter((slot) => {
+      const slotJobId = getSlotJobId(slot);
+      const slotDate = formatOnlyDate(slot.start_at);
+
+      if (filters.date && slotDate !== filters.date) return false;
+
+      if (search) {
+        const text = [
+          slot.title,
+          slot.location,
+          slot.meeting_url,
+          slot.recruiter_name,
+          slot.recruiter_phone,
+          slot.reserved_name,
+          slot.reserved_phone,
+          slot.reserved_email,
+          jobNameById(slotJobId),
+          slotJobId,
+        ]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
+
+        if (!text.includes(search)) return false;
+      }
+
+      return true;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [slots, filters, jobs]);
+
   const stats = useMemo(() => {
     return {
-      total: slots.length,
-      available: slots.filter((slot) => slot.status === "available").length,
-      reserved: slots.filter((slot) => slot.status === "reserved").length,
-      cancelled: slots.filter((slot) => slot.status === "cancelled").length,
+      total: visibleSlots.length,
+      available: visibleSlots.filter((slot) => slot.status === "available").length,
+      reserved: visibleSlots.filter((slot) => slot.status === "reserved").length,
+      cancelled: visibleSlots.filter((slot) => slot.status === "cancelled").length,
     };
-  }, [slots]);
+  }, [visibleSlots]);
 
   async function createSlots() {
     if (!form.jobId) {
@@ -135,16 +236,34 @@ export default function AvailabilityPage() {
       return;
     }
 
+    if (form.mode === "range" && (!form.date || !form.startTime || !form.endTime)) {
+      alert("Preencha data, início e fim.");
+      return;
+    }
+
+    if (form.mode === "single" && (!form.date || !form.manualTime)) {
+      alert("Preencha data e horário manual.");
+      return;
+    }
+
     setSaving(true);
 
     try {
+      const body =
+        form.mode === "single"
+          ? {
+              ...form,
+              startAt: `${form.date}T${form.manualTime}:00`,
+            }
+          : form;
+
       const res = await fetch("/api/rh/interviews/availability", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         credentials: "include",
-        body: JSON.stringify(form),
+        body: JSON.stringify(body),
       });
 
       const data = await res.json().catch(() => ({}));
@@ -161,8 +280,59 @@ export default function AvailabilityPage() {
     }
   }
 
+  function openEdit(slot: any) {
+    setEditingSlot(slot);
+    setEditForm({
+      jobId: getSlotJobId(slot),
+      title: slot.title || "",
+      status: slot.status || "available",
+      location: slot.location || "",
+      meetingUrl: slot.meeting_url || "",
+      agendaType: getSlotAgendaType(slot),
+      maxCandidates: String(slot.max_candidates || 1),
+      recruiterName: slot.recruiter_name || "",
+      recruiterPhone: slot.recruiter_phone || "",
+      notes: slot.notes || "",
+    });
+  }
+
+  async function saveEdit() {
+    if (!editingSlot?.id) return;
+
+    const res = await fetch("/api/rh/interviews/availability", {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      credentials: "include",
+      body: JSON.stringify({
+        id: editingSlot.id,
+        jobId: editForm.jobId || null,
+        title: editForm.title,
+        status: editForm.status,
+        location: editForm.location,
+        meetingUrl: editForm.meetingUrl,
+        agendaType: editForm.agendaType,
+        maxCandidates: Number(editForm.maxCandidates || 1),
+        recruiterName: editForm.recruiterName,
+        recruiterPhone: editForm.recruiterPhone,
+        notes: editForm.notes,
+      }),
+    });
+
+    const data = await res.json().catch(() => ({}));
+
+    if (!res.ok) {
+      alert(data.error || "Erro ao editar horário.");
+      return;
+    }
+
+    setEditingSlot(null);
+    await loadSlots();
+  }
+
   async function cancelSlot(slot: any) {
-    if (!confirm("Cancelar este horário?")) return;
+    if (!confirm("Cancelar este horário? Ele ficará marcado como cancelado.")) return;
 
     const res = await fetch(`/api/rh/interviews/availability?id=${slot.id}`, {
       method: "DELETE",
@@ -173,6 +343,48 @@ export default function AvailabilityPage() {
 
     if (!res.ok) {
       alert(data.error || "Erro ao cancelar horário.");
+      return;
+    }
+
+    await loadSlots();
+  }
+
+  async function deleteSlot(slot: any) {
+    if (!confirm("Excluir definitivamente este horário? Essa ação não pode ser desfeita.")) return;
+
+    const res = await fetch(`/api/rh/interviews/availability?id=${slot.id}&hard=1`, {
+      method: "DELETE",
+      credentials: "include",
+    });
+
+    const data = await res.json().catch(() => ({}));
+
+    if (!res.ok) {
+      alert(data.error || "Erro ao excluir horário.");
+      return;
+    }
+
+    await loadSlots();
+  }
+
+  async function restoreSlot(slot: any) {
+    const res = await fetch("/api/rh/interviews/availability", {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      credentials: "include",
+      body: JSON.stringify({
+        id: slot.id,
+        status: "available",
+        clearReservation: true,
+      }),
+    });
+
+    const data = await res.json().catch(() => ({}));
+
+    if (!res.ok) {
+      alert(data.error || "Erro ao reativar horário.");
       return;
     }
 
@@ -191,7 +403,7 @@ export default function AvailabilityPage() {
           <p style={styles.kicker}>Zentra RH</p>
           <h1 style={styles.title}>Disponibilidade de entrevistas</h1>
           <p style={styles.subtitle}>
-            Crie horários disponíveis para candidatos escolherem. Crie horários individuais ou compartilhados por vaga. Na agenda compartilhada, vários candidatos podem confirmar o mesmo horário.
+            Crie horários individuais ou compartilhados, vinculados à vaga correta. Use filtros para localizar, editar, cancelar ou excluir horários.
           </p>
         </div>
 
@@ -201,7 +413,7 @@ export default function AvailabilityPage() {
       </section>
 
       <section style={styles.statsGrid}>
-        <Metric label="Total" value={stats.total} />
+        <Metric label="Total filtrado" value={stats.total} />
         <Metric label="Disponíveis" value={stats.available} />
         <Metric label="Reservados" value={stats.reserved} />
         <Metric label="Cancelados" value={stats.cancelled} />
@@ -209,10 +421,28 @@ export default function AvailabilityPage() {
 
       <section style={styles.card}>
         <h2 style={styles.sectionTitle}>Gerar horários</h2>
+        <p style={styles.smallText}>
+          Gere uma grade em lote ou adicione um único horário manualmente. A agenda sempre fica vinculada à vaga selecionada.
+        </p>
+
+        <div style={styles.modeRow}>
+          <button
+            type="button"
+            style={form.mode === "range" ? styles.tabActive : styles.tab}
+            onClick={() => setForm({ ...form, mode: "range" })}
+          >
+            Criar em lote
+          </button>
+          <button
+            type="button"
+            style={form.mode === "single" ? styles.tabActive : styles.tab}
+            onClick={() => setForm({ ...form, mode: "single" })}
+          >
+            Adicionar horário manual
+          </button>
+        </div>
 
         <div style={styles.formGrid}>
-          <input style={styles.input} placeholder="Título da agenda (opcional)" value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} />
-
           <select
             style={styles.input}
             value={form.jobId}
@@ -232,19 +462,71 @@ export default function AvailabilityPage() {
               </option>
             ))}
           </select>
-          <input type="date" style={styles.input} value={form.date} onChange={(event) => setForm({ ...form, date: event.target.value })} />
-          <input type="time" style={styles.input} value={form.startTime} onChange={(event) => setForm({ ...form, startTime: event.target.value })} />
-          <input type="time" style={styles.input} value={form.endTime} onChange={(event) => setForm({ ...form, endTime: event.target.value })} />
 
-          <select style={styles.input} value={form.duration} onChange={(event) => setForm({ ...form, duration: event.target.value })}>
+          <input
+            style={styles.input}
+            placeholder="Título da agenda (opcional)"
+            value={form.title}
+            onChange={(event) => setForm({ ...form, title: event.target.value })}
+          />
+
+          <input
+            type="date"
+            style={styles.input}
+            value={form.date}
+            onChange={(event) => setForm({ ...form, date: event.target.value })}
+          />
+
+          {form.mode === "range" ? (
+            <>
+              <input
+                type="time"
+                style={styles.input}
+                value={form.startTime}
+                onChange={(event) => setForm({ ...form, startTime: event.target.value })}
+              />
+              <input
+                type="time"
+                style={styles.input}
+                value={form.endTime}
+                onChange={(event) => setForm({ ...form, endTime: event.target.value })}
+              />
+            </>
+          ) : (
+            <input
+              type="time"
+              style={styles.input}
+              value={form.manualTime}
+              onChange={(event) => setForm({ ...form, manualTime: event.target.value })}
+            />
+          )}
+
+          <select
+            style={styles.input}
+            value={form.duration}
+            onChange={(event) => setForm({ ...form, duration: event.target.value })}
+          >
             <option value="15">15 minutos</option>
             <option value="30">30 minutos</option>
             <option value="45">45 minutos</option>
             <option value="60">60 minutos</option>
+            <option value="90">90 minutos</option>
+            <option value="120">120 minutos</option>
           </select>
 
-          <input style={styles.input} placeholder="Local" value={form.location} onChange={(event) => setForm({ ...form, location: event.target.value })} />
-          <input style={styles.input} placeholder="Link Google Meet/Teams" value={form.meetingUrl} onChange={(event) => setForm({ ...form, meetingUrl: event.target.value })} />
+          <input
+            style={styles.input}
+            placeholder="Local presencial"
+            value={form.location}
+            onChange={(event) => setForm({ ...form, location: event.target.value })}
+          />
+
+          <input
+            style={styles.input}
+            placeholder="Link Google Meet/Teams"
+            value={form.meetingUrl}
+            onChange={(event) => setForm({ ...form, meetingUrl: event.target.value })}
+          />
 
           <select
             style={styles.input}
@@ -276,14 +558,31 @@ export default function AvailabilityPage() {
               }
             />
           )}
-          <input style={styles.input} placeholder="Recrutador responsável" value={form.recruiterName} onChange={(event) => setForm({ ...form, recruiterName: event.target.value })} />
-          <input style={styles.input} placeholder="WhatsApp do recrutador" value={form.recruiterPhone} onChange={(event) => setForm({ ...form, recruiterPhone: event.target.value })} />
 
-          <textarea style={{ ...styles.input, gridColumn: "1 / -1", minHeight: 90 }} placeholder="Observações internas" value={form.notes} onChange={(event) => setForm({ ...form, notes: event.target.value })} />
+          <input
+            style={styles.input}
+            placeholder="Recrutador responsável"
+            value={form.recruiterName}
+            onChange={(event) => setForm({ ...form, recruiterName: event.target.value })}
+          />
+
+          <input
+            style={styles.input}
+            placeholder="WhatsApp do recrutador"
+            value={form.recruiterPhone}
+            onChange={(event) => setForm({ ...form, recruiterPhone: event.target.value })}
+          />
+
+          <textarea
+            style={{ ...styles.input, gridColumn: "1 / -1", minHeight: 90 }}
+            placeholder="Observações internas"
+            value={form.notes}
+            onChange={(event) => setForm({ ...form, notes: event.target.value })}
+          />
         </div>
 
         <button style={styles.primaryButton} onClick={createSlots} disabled={saving}>
-          {saving ? "Gerando..." : "Gerar horários"}
+          {saving ? "Salvando..." : form.mode === "single" ? "Adicionar horário" : "Gerar horários"}
         </button>
       </section>
 
@@ -291,77 +590,286 @@ export default function AvailabilityPage() {
         <div style={styles.headerRow}>
           <div>
             <h2 style={styles.sectionTitle}>Horários</h2>
-            <p style={styles.smallText}>Copie qualquer link disponível e envie ao candidato.</p>
+            <p style={styles.smallText}>
+              Filtre por vaga, data, status ou termo. Você pode copiar, abrir, editar, cancelar ou excluir horários.
+            </p>
           </div>
+        </div>
 
-          <select style={styles.inputSmall} value={filters.status} onChange={(event) => setFilters({ ...filters, status: event.target.value })}>
-            <option value="all">Todos</option>
+        <div style={styles.filtersGrid}>
+          <input
+            style={styles.input}
+            placeholder="Buscar por vaga, candidato, telefone, local..."
+            value={filters.search}
+            onChange={(event) => setFilters({ ...filters, search: event.target.value })}
+          />
+
+          <select
+            style={styles.input}
+            value={filters.jobId}
+            onChange={(event) => setFilters({ ...filters, jobId: event.target.value })}
+          >
+            <option value="">Todas as vagas</option>
+            {jobs.map((job) => (
+              <option key={job.id} value={job.id}>
+                {jobLabel(job)}
+              </option>
+            ))}
+          </select>
+
+          <input
+            type="date"
+            style={styles.input}
+            value={filters.date}
+            onChange={(event) => setFilters({ ...filters, date: event.target.value })}
+          />
+
+          <select
+            style={styles.input}
+            value={filters.status}
+            onChange={(event) => setFilters({ ...filters, status: event.target.value })}
+          >
+            <option value="all">Todos os status</option>
             <option value="available">Disponíveis</option>
             <option value="reserved">Reservados</option>
+            <option value="confirmed">Confirmados</option>
             <option value="cancelled">Cancelados</option>
+            <option value="approved">Aprovados</option>
+            <option value="rejected">Reprovados</option>
+            <option value="no_show">Não compareceu</option>
           </select>
 
           <button style={styles.secondaryButton} onClick={loadSlots}>
             Filtrar
           </button>
+
+          <button
+            style={styles.secondaryButton}
+            onClick={() => {
+              setFilters({ status: "all", jobId: "", date: "", search: "" });
+              setTimeout(loadSlots, 0);
+            }}
+          >
+            Limpar filtros
+          </button>
         </div>
 
         {loading && <p style={styles.smallText}>Carregando horários...</p>}
 
-        {!loading && !slots.length && <div style={styles.empty}>Nenhum horário criado.</div>}
+        {!loading && !visibleSlots.length && <div style={styles.empty}>Nenhum horário encontrado.</div>}
 
         <div style={styles.cardsGrid}>
-          {slots.map((slot) => (
-            <article key={slot.id} style={styles.slotCard}>
-              <div style={styles.cardTop}>
-                <div>
-                  <strong>{slot.title || "Entrevista"}</strong>
-                  <p>{formatDate(slot.start_at)}</p>
-                </div>
+          {visibleSlots.map((slot) => {
+            const slotJobId = getSlotJobId(slot);
+            const isShared = getSlotAgendaType(slot) === "shared";
 
-                <span style={slot.status === "reserved" ? styles.badgeReserved : slot.status === "cancelled" ? styles.badgeCancelled : styles.badge}>
-                  {slot.status === "available" ? "Disponível" : slot.status === "reserved" ? "Reservado" : "Cancelado"}
-                </span>
-              </div>
+            return (
+              <article key={slot.id} style={styles.slotCard}>
+                <div style={styles.cardTop}>
+                  <div>
+                    <strong>{slot.title || "Entrevista"}</strong>
+                    <p>{formatDate(slot.start_at)}</p>
+                    {slot.end_at && <p style={styles.smallText}>Fim: {formatDate(slot.end_at)}</p>}
+                  </div>
 
-              {slot.reserved_name && (
-                <div style={styles.reservedBox}>
-                  <b>{slot.reserved_name}</b>
-                  <span>{slot.reserved_phone || "-"}</span>
-                  <span>{slot.reserved_email || "-"}</span>
-                </div>
-              )}
-
-              <div style={styles.info}>
-                {(slot.job_id || slot.id_do_trabalho) && <span>Vaga vinculada: {slot.job_id || slot.id_do_trabalho}</span>}
-                {(slot.agenda_type || slot.agendaType) === "shared" && (
-                  <span>
-                    Agenda compartilhada: {slot.reserved_count || 0}/{slot.max_candidates || 1} confirmados
+                  <span
+                    style={
+                      slot.status === "reserved" || slot.status === "confirmed"
+                        ? styles.badgeReserved
+                        : slot.status === "cancelled"
+                          ? styles.badgeCancelled
+                          : styles.badge
+                    }
+                  >
+                    {statusLabel(slot.status)}
                   </span>
+                </div>
+
+                {slot.reserved_name && (
+                  <div style={styles.reservedBox}>
+                    <b>{slot.reserved_name}</b>
+                    <span>{slot.reserved_phone || "-"}</span>
+                    <span>{slot.reserved_email || "-"}</span>
+                  </div>
                 )}
-                {slot.location && <span>Local: {slot.location}</span>}
-                {slot.meeting_url && <span>Link: {slot.meeting_url}</span>}
-                {slot.recruiter_name && <span>Recrutador: {slot.recruiter_name}</span>}
-                {slot.recruiter_phone && <span>WhatsApp recrutador: {slot.recruiter_phone}</span>}
-              </div>
 
-              <div style={styles.actions}>
-                <button style={styles.primarySmallButton} disabled={slot.status !== "available"} onClick={() => copyLink(slot)}>
-                  Copiar link
-                </button>
+                <div style={styles.info}>
+                  {slotJobId && <span>Vaga: {jobNameById(slotJobId)}</span>}
+                  <span>Tipo: {isShared ? "Compartilhada por lote" : "Individual"}</span>
+                  {isShared && (
+                    <span>
+                      Confirmados: {slot.reserved_count || 0}/{slot.max_candidates || 1}
+                    </span>
+                  )}
+                  {slot.location && <span>Local: {slot.location}</span>}
+                  {slot.meeting_url && <span>Link reunião: {slot.meeting_url}</span>}
+                  {slot.recruiter_name && <span>Recrutador: {slot.recruiter_name}</span>}
+                  {slot.recruiter_phone && <span>WhatsApp recrutador: {slot.recruiter_phone}</span>}
+                </div>
 
-                <a style={styles.secondaryButton} href={`/agenda/${slot.token}`} target="_blank" rel="noreferrer">
-                  Abrir
-                </a>
+                <div style={styles.actions}>
+                  <button
+                    style={styles.primarySmallButton}
+                    disabled={!slot.token || slot.status === "cancelled"}
+                    onClick={() => copyLink(slot)}
+                  >
+                    Copiar link
+                  </button>
 
-                <button style={styles.dangerButton} disabled={slot.status === "cancelled"} onClick={() => cancelSlot(slot)}>
-                  Cancelar
-                </button>
-              </div>
-            </article>
-          ))}
+                  {slot.token && (
+                    <a style={styles.secondaryButton} href={`/agenda/${slot.token}`} target="_blank" rel="noreferrer">
+                      Abrir
+                    </a>
+                  )}
+
+                  <button style={styles.secondaryButton} onClick={() => openEdit(slot)}>
+                    Editar
+                  </button>
+
+                  {slot.status === "cancelled" ? (
+                    <button style={styles.primarySmallButton} onClick={() => restoreSlot(slot)}>
+                      Reativar
+                    </button>
+                  ) : (
+                    <button style={styles.warningButton} onClick={() => cancelSlot(slot)}>
+                      Cancelar
+                    </button>
+                  )}
+
+                  <button style={styles.dangerButton} onClick={() => deleteSlot(slot)}>
+                    Excluir
+                  </button>
+                </div>
+              </article>
+            );
+          })}
         </div>
       </section>
+
+      {editingSlot && (
+        <div style={styles.modalOverlay}>
+          <div style={styles.modal}>
+            <div style={styles.headerRow}>
+              <div>
+                <h2 style={styles.sectionTitle}>Editar horário</h2>
+                <p style={styles.smallText}>{formatDate(editingSlot.start_at)}</p>
+              </div>
+
+              <button style={styles.secondaryButton} onClick={() => setEditingSlot(null)}>
+                Fechar
+              </button>
+            </div>
+
+            <div style={styles.formGrid}>
+              <select
+                style={styles.input}
+                value={editForm.jobId}
+                onChange={(event) => setEditForm({ ...editForm, jobId: event.target.value })}
+              >
+                <option value="">Selecione a vaga vinculada</option>
+                {jobs.map((job) => (
+                  <option key={job.id} value={job.id}>
+                    {jobLabel(job)}
+                  </option>
+                ))}
+              </select>
+
+              <input
+                style={styles.input}
+                placeholder="Título"
+                value={editForm.title}
+                onChange={(event) => setEditForm({ ...editForm, title: event.target.value })}
+              />
+
+              <select
+                style={styles.input}
+                value={editForm.status}
+                onChange={(event) => setEditForm({ ...editForm, status: event.target.value })}
+              >
+                <option value="available">Disponível</option>
+                <option value="reserved">Reservado</option>
+                <option value="confirmed">Confirmado</option>
+                <option value="cancelled">Cancelado</option>
+                <option value="approved">Aprovado</option>
+                <option value="rejected">Reprovado</option>
+                <option value="no_show">Não compareceu</option>
+              </select>
+
+              <input
+                style={styles.input}
+                placeholder="Local"
+                value={editForm.location}
+                onChange={(event) => setEditForm({ ...editForm, location: event.target.value })}
+              />
+
+              <input
+                style={styles.input}
+                placeholder="Link Google Meet/Teams"
+                value={editForm.meetingUrl}
+                onChange={(event) => setEditForm({ ...editForm, meetingUrl: event.target.value })}
+              />
+
+              <select
+                style={styles.input}
+                value={editForm.agendaType}
+                onChange={(event) =>
+                  setEditForm({
+                    ...editForm,
+                    agendaType: event.target.value,
+                    maxCandidates: event.target.value === "individual" ? "1" : editForm.maxCandidates,
+                  })
+                }
+              >
+                <option value="individual">Agenda individual</option>
+                <option value="shared">Agenda compartilhada por lote</option>
+              </select>
+
+              {editForm.agendaType === "shared" && (
+                <input
+                  type="number"
+                  min={1}
+                  max={300}
+                  style={styles.input}
+                  placeholder="Máximo de candidatos"
+                  value={editForm.maxCandidates}
+                  onChange={(event) => setEditForm({ ...editForm, maxCandidates: event.target.value })}
+                />
+              )}
+
+              <input
+                style={styles.input}
+                placeholder="Recrutador responsável"
+                value={editForm.recruiterName}
+                onChange={(event) => setEditForm({ ...editForm, recruiterName: event.target.value })}
+              />
+
+              <input
+                style={styles.input}
+                placeholder="WhatsApp do recrutador"
+                value={editForm.recruiterPhone}
+                onChange={(event) => setEditForm({ ...editForm, recruiterPhone: event.target.value })}
+              />
+
+              <textarea
+                style={{ ...styles.input, gridColumn: "1 / -1", minHeight: 90 }}
+                placeholder="Observações"
+                value={editForm.notes}
+                onChange={(event) => setEditForm({ ...editForm, notes: event.target.value })}
+              />
+            </div>
+
+            <div style={styles.actions}>
+              <button style={styles.primaryButton} onClick={saveEdit}>
+                Salvar alterações
+              </button>
+
+              <button style={styles.secondaryButton} onClick={() => setEditingSlot(null)}>
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }
@@ -375,7 +883,7 @@ function Metric({ label, value }: { label: string; value: any }) {
   );
 }
 
-const styles: Record<string, React.CSSProperties> = {
+const styles: Record<string, CSSProperties> = {
   page: { minHeight: "100vh", padding: 20, background: "linear-gradient(135deg, #eff6ff, #ffffff, #dbeafe)", color: "#0f172a" },
   hero: { background: "#fff", border: "1px solid #bfdbfe", borderRadius: 28, padding: 24, display: "flex", justifyContent: "space-between", gap: 16, flexWrap: "wrap", boxShadow: "0 18px 50px rgba(37,99,235,.08)" },
   kicker: { margin: 0, color: "#2563eb", fontWeight: 900, letterSpacing: ".22em", fontSize: 12, textTransform: "uppercase" },
@@ -388,9 +896,12 @@ const styles: Record<string, React.CSSProperties> = {
   sectionTitle: { margin: 0, fontSize: 22, fontWeight: 950 },
   smallText: { margin: "4px 0", color: "#64748b", fontSize: 12 },
   formGrid: { marginTop: 16, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: 12 },
+  filtersGrid: { marginTop: 16, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, alignItems: "center" },
   input: { width: "100%", boxSizing: "border-box", borderRadius: 16, border: "1px solid #bfdbfe", background: "#f8fafc", padding: "13px 14px", outline: "none", fontSize: 14, color: "#0f172a" },
-  inputSmall: { borderRadius: 14, border: "1px solid #bfdbfe", background: "#f8fafc", padding: "10px 12px", outline: "none", fontSize: 14, color: "#0f172a" },
   headerRow: { display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", justifyContent: "space-between" },
+  modeRow: { display: "flex", gap: 8, flexWrap: "wrap", marginTop: 14 },
+  tab: { border: "1px solid #bfdbfe", borderRadius: 14, padding: "10px 12px", background: "#fff", color: "#2563eb", fontWeight: 900, cursor: "pointer" },
+  tabActive: { border: "1px solid #2563eb", borderRadius: 14, padding: "10px 12px", background: "#eff6ff", color: "#1d4ed8", fontWeight: 950, cursor: "pointer" },
   secondaryButton: { border: "1px solid #bfdbfe", borderRadius: 14, padding: "10px 12px", background: "#fff", color: "#2563eb", fontWeight: 900, cursor: "pointer", textDecoration: "none", textAlign: "center" },
   empty: { marginTop: 16, border: "1px dashed #93c5fd", borderRadius: 20, padding: 24, textAlign: "center", color: "#64748b" },
   cardsGrid: { marginTop: 16, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(290px, 1fr))", gap: 14 },
@@ -401,7 +912,10 @@ const styles: Record<string, React.CSSProperties> = {
   badgeCancelled: { border: "1px solid #fecaca", background: "#fff1f2", color: "#dc2626", borderRadius: 999, padding: "6px 10px", fontSize: 11, fontWeight: 900, whiteSpace: "nowrap" },
   reservedBox: { border: "1px solid #bbf7d0", background: "#f0fdf4", borderRadius: 14, padding: 12, display: "grid", gap: 4, color: "#166534", fontSize: 13 },
   info: { display: "grid", gap: 4, color: "#475569", fontSize: 13 },
-  actions: { display: "flex", gap: 8, flexWrap: "wrap" },
+  actions: { display: "flex", gap: 8, flexWrap: "wrap", marginTop: 4 },
   primarySmallButton: { border: 0, borderRadius: 14, padding: "10px 12px", background: "#2563eb", color: "#fff", fontWeight: 900, cursor: "pointer" },
+  warningButton: { border: 0, borderRadius: 14, padding: "10px 12px", background: "#f59e0b", color: "#fff", fontWeight: 900, cursor: "pointer" },
   dangerButton: { border: 0, borderRadius: 14, padding: "10px 12px", background: "#ef4444", color: "#fff", fontWeight: 900, cursor: "pointer" },
+  modalOverlay: { position: "fixed", inset: 0, background: "rgba(15,23,42,.45)", display: "grid", placeItems: "center", padding: 18, zIndex: 50 },
+  modal: { width: "min(980px, 100%)", maxHeight: "90vh", overflow: "auto", background: "#fff", borderRadius: 24, border: "1px solid #bfdbfe", padding: 22, boxShadow: "0 24px 80px rgba(15,23,42,.25)" },
 };
