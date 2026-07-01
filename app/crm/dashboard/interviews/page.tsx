@@ -110,6 +110,8 @@ export default function AvailabilityPage() {
     notes: "",
   });
 
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+
   async function loadJobs() {
     try {
       const res = await fetch("/api/rh/jobs", {
@@ -391,6 +393,105 @@ export default function AvailabilityPage() {
     await loadSlots();
   }
 
+  async function updateSlotStatus(slot: any, status: string) {
+    const confirmText: Record<string, string> = {
+      approved: "Marcar este candidato como aprovado?",
+      rejected: "Marcar este candidato como não aprovado?",
+      no_show: "Marcar como não compareceu?",
+      available: "Reabrir este horário para reagendamento?",
+    };
+
+    if (!confirm(confirmText[status] || "Atualizar status deste horário?")) return;
+
+    const res = await fetch("/api/rh/interviews/availability", {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      credentials: "include",
+      body: JSON.stringify({
+        id: slot.id,
+        status,
+        clearReservation: status === "available",
+      }),
+    });
+
+    const data = await res.json().catch(() => ({}));
+
+    if (!res.ok) {
+      alert(data.error || "Erro ao atualizar status.");
+      return;
+    }
+
+    await loadSlots();
+  }
+
+  function toggleSelected(id: string) {
+    setSelectedIds((current) =>
+      current.includes(id) ? current.filter((item) => item !== id) : [...current, id]
+    );
+  }
+
+  function toggleSelectAllVisible() {
+    const visibleIds = visibleSlots.map((slot) => String(slot.id));
+    const allSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedIds.includes(id));
+
+    setSelectedIds((current) => {
+      if (allSelected) return current.filter((id) => !visibleIds.includes(id));
+      return Array.from(new Set([...current, ...visibleIds]));
+    });
+  }
+
+  async function bulkDeleteSelected() {
+    if (!selectedIds.length) {
+      alert("Selecione pelo menos um horário.");
+      return;
+    }
+
+    if (!confirm(`Excluir definitivamente ${selectedIds.length} horário(s) selecionado(s)?`)) return;
+
+    for (const id of selectedIds) {
+      const res = await fetch(`/api/rh/interviews/availability?id=${id}&hard=1`, {
+        method: "DELETE",
+        credentials: "include",
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        alert(data.error || `Erro ao excluir horário ${id}.`);
+        return;
+      }
+    }
+
+    setSelectedIds([]);
+    await loadSlots();
+  }
+
+  async function bulkCancelSelected() {
+    if (!selectedIds.length) {
+      alert("Selecione pelo menos um horário.");
+      return;
+    }
+
+    if (!confirm(`Cancelar ${selectedIds.length} horário(s) selecionado(s)?`)) return;
+
+    for (const id of selectedIds) {
+      const res = await fetch(`/api/rh/interviews/availability?id=${id}`, {
+        method: "DELETE",
+        credentials: "include",
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        alert(data.error || `Erro ao cancelar horário ${id}.`);
+        return;
+      }
+    }
+
+    setSelectedIds([]);
+    await loadSlots();
+  }
+
   async function copyLink(slot: any) {
     await navigator.clipboard.writeText(agendaLink(slot.token));
     alert("Link copiado.");
@@ -654,6 +755,34 @@ export default function AvailabilityPage() {
           </button>
         </div>
 
+        <div style={styles.bulkBar}>
+          <label style={styles.checkLabel}>
+            <input
+              type="checkbox"
+              checked={
+                visibleSlots.length > 0 &&
+                visibleSlots.every((slot) => selectedIds.includes(String(slot.id)))
+              }
+              onChange={toggleSelectAllVisible}
+            />
+            Selecionar todos
+          </label>
+
+          <span style={styles.smallText}>{selectedIds.length} selecionado(s)</span>
+
+          <button style={styles.secondaryButton} onClick={() => setSelectedIds([])}>
+            Limpar seleção
+          </button>
+
+          <button style={styles.warningButton} onClick={bulkCancelSelected}>
+            Cancelar selecionados
+          </button>
+
+          <button style={styles.dangerButton} onClick={bulkDeleteSelected}>
+            Excluir selecionados
+          </button>
+        </div>
+
         {loading && <p style={styles.smallText}>Carregando horários...</p>}
 
         {!loading && !visibleSlots.length && <div style={styles.empty}>Nenhum horário encontrado.</div>}
@@ -666,6 +795,14 @@ export default function AvailabilityPage() {
             return (
               <article key={slot.id} style={styles.slotCard}>
                 <div style={styles.cardTop}>
+                  <label style={styles.cardCheck}>
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.includes(String(slot.id))}
+                      onChange={() => toggleSelected(String(slot.id))}
+                    />
+                  </label>
+
                   <div>
                     <strong>{slot.title || "Entrevista"}</strong>
                     <p>{formatDate(slot.start_at)}</p>
@@ -725,6 +862,22 @@ export default function AvailabilityPage() {
                   <button style={styles.secondaryButton} onClick={() => openEdit(slot)}>
                     Editar
                   </button>
+
+                  {(slot.status === "reserved" || slot.status === "confirmed") && (
+                    <>
+                      <button style={styles.successButton} onClick={() => updateSlotStatus(slot, "approved")}>
+                        Aprovado
+                      </button>
+
+                      <button style={styles.secondaryButton} onClick={() => updateSlotStatus(slot, "available")}>
+                        Reagendar
+                      </button>
+
+                      <button style={styles.dangerButton} onClick={() => updateSlotStatus(slot, "rejected")}>
+                        Não aprovado
+                      </button>
+                    </>
+                  )}
 
                   {slot.status === "cancelled" ? (
                     <button style={styles.primarySmallButton} onClick={() => restoreSlot(slot)}>
@@ -918,4 +1071,8 @@ const styles: Record<string, CSSProperties> = {
   dangerButton: { border: 0, borderRadius: 14, padding: "10px 12px", background: "#ef4444", color: "#fff", fontWeight: 900, cursor: "pointer" },
   modalOverlay: { position: "fixed", inset: 0, background: "rgba(15,23,42,.45)", display: "grid", placeItems: "center", padding: 18, zIndex: 50 },
   modal: { width: "min(980px, 100%)", maxHeight: "90vh", overflow: "auto", background: "#fff", borderRadius: 24, border: "1px solid #bfdbfe", padding: 22, boxShadow: "0 24px 80px rgba(15,23,42,.25)" },
+  bulkBar: { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", margin: "14px 0" },
+  checkLabel: { display: "flex", alignItems: "center", gap: 8, fontWeight: 900, color: "#1d4ed8" },
+  cardCheck: { display: "flex", alignItems: "center", marginRight: 8 },
+  successButton: { border: 0, borderRadius: 14, padding: "10px 12px", background: "#16a34a", color: "#fff", fontWeight: 900, cursor: "pointer" },
 };

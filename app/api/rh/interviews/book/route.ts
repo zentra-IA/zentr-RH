@@ -619,10 +619,31 @@ export async function POST(req: NextRequest) {
         ? await getSlotByToken(supabase, contextToken)
         : currentSlot;
 
+    const agendaType = clean(currentSlot.agenda_type || currentSlot.agendaType) || "individual";
+    const isSharedAgenda = agendaType === "shared";
+    const maxCandidates = Math.max(
+      1,
+      Number(currentSlot.max_candidates || currentSlot.maxCandidates || 1)
+    );
+    const currentReservedCount = Math.max(
+      0,
+      Number(currentSlot.reserved_count || currentSlot.reservedCount || 0)
+    );
+
     if (currentSlot.status !== "available") {
       return NextResponse.json(
         {
           error: "Este horário já foi reservado. Escolha outro horário.",
+          alreadyReserved: true,
+        },
+        { status: 409 }
+      );
+    }
+
+    if (isSharedAgenda && currentReservedCount >= maxCandidates) {
+      return NextResponse.json(
+        {
+          error: "Este horário compartilhado atingiu o limite de candidatos.",
           alreadyReserved: true,
         },
         { status: 409 }
@@ -655,13 +676,21 @@ export async function POST(req: NextRequest) {
       body,
     });
 
+    const nextReservedCount = isSharedAgenda
+      ? currentReservedCount + 1
+      : 1;
+
+    const shouldCloseSlot =
+      !isSharedAgenda || nextReservedCount >= maxCandidates;
+
     const reservationPayload: any = {
-      status: "reserved",
+      status: shouldCloseSlot ? "reserved" : "available",
       reserved_name: updatedLead.name || lead.name || "Candidato",
       reserved_phone: updatedLead.phone || lead.phone || null,
       reserved_email: updatedLead.email || lead.email || null,
       lead_id: updatedLead.id,
       reserved_at: new Date().toISOString(),
+      reserved_count: nextReservedCount,
       updated_at: new Date().toISOString(),
     };
 
@@ -689,7 +718,7 @@ export async function POST(req: NextRequest) {
     if (error) {
       console.error("RESERVE SLOT ERROR:", error);
       return NextResponse.json(
-        { error: "Este horário acabou de ser reservado. Escolha outro." },
+        { error: "Este horário acabou de ser reservado ou atingiu o limite. Escolha outro." },
         { status: 409 }
       );
     }
