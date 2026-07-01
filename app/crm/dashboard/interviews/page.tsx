@@ -483,21 +483,22 @@ export default function AvailabilityPage() {
       return;
     }
 
-    if (!interviewId && !leadId) {
-      alert("Não encontrei o ID deste candidato para atualizar. Recarregue a página e tente novamente.");
+    if (!interviewId && !leadId && !person?.phone && !person?.email) {
+      alert("Não encontrei os dados deste candidato para atualizar. Recarregue a página e tente novamente.");
       return;
     }
 
-    const res = await fetch("/api/rh/interviews", {
+    const res = await fetch("/api/rh/interviews/availability", {
       method: "PATCH",
       headers: {
         "Content-Type": "application/json",
       },
       credentials: "include",
       body: JSON.stringify({
-        id: interviewId,
+        id: slot.id,
+        candidateAction: true,
+        interviewId,
         leadId,
-        slotId: slot.id,
         status,
         candidatePhone: person?.phone || null,
         candidateEmail: person?.email || null,
@@ -912,7 +913,7 @@ export default function AvailabilityPage() {
                   </span>
                 </div>
 
-                {slot.reserved_name && (
+                {slot.reserved_name && (!isShared || attendees.length === 0) && (
                   <div style={styles.reservedBox}>
                     <b>{slot.reserved_name}</b>
                     <span>{slot.reserved_phone || "-"}</span>
@@ -1203,7 +1204,7 @@ const styles: Record<string, CSSProperties> = {
   badgeReserved: { border: "1px solid #bbf7d0", background: "#f0fdf4", color: "#15803d", borderRadius: 999, padding: "6px 10px", fontSize: 11, fontWeight: 900, whiteSpace: "nowrap" },
   badgeCancelled: { border: "1px solid #fecaca", background: "#fff1f2", color: "#dc2626", borderRadius: 999, padding: "6px 10px", fontSize: 11, fontWeight: 900, whiteSpace: "nowrap" },
   reservedBox: { border: "1px solid #bbf7d0", background: "#f0fdf4", borderRadius: 14, padding: 12, display: "grid", gap: 4, color: "#166534", fontSize: 13 },
-  attendeesBox: { border: "1px solid #bfdbfe", background: "#eff6ff", borderRadius: 14, padding: 12, display: "grid", gap: 10, color: "#1e3a8a", fontSize: 13 },
+  attendeesBox: { border: "1px solid #bfdbfe", background: "#eff6ff", borderRadius: 14, padding: 12, display: "grid", gap: 10, color: "#1e3a8a", fontSize: 13, maxHeight: 360, overflowY: "auto" },
   attendeesHeader: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 },
   attendeesCount: { border: "1px solid #bfdbfe", background: "#fff", color: "#1d4ed8", borderRadius: 999, padding: "3px 8px", fontSize: 11, fontWeight: 900 },
   attendeeCard: { background: "#fff", border: "1px solid #dbeafe", borderRadius: 14, padding: 12, display: "grid", gap: 10 },

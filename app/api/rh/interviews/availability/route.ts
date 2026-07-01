@@ -188,6 +188,360 @@ async function upsertLeadFromSlot(supabase: any, slot: any, status: string) {
   }
 }
 
+
+function normalizeText(value: any) {
+  return clean(value).toLowerCase();
+}
+
+function slotJobId(slot: any) {
+  return slot?.job_id || slot?.id_do_trabalho || "";
+}
+
+function slotStart(slot: any) {
+  return slot?.start_at || slot?.comecar_em || "";
+}
+
+function slotEnd(slot: any) {
+  return slot?.end_at || slot?.fim_em || "";
+}
+
+function interviewJobId(interview: any) {
+  return interview?.job_id || interview?.id_do_trabalho || "";
+}
+
+function interviewStart(interview: any) {
+  return interview?.start_at || interview?.comecar_em || "";
+}
+
+function sameDateTime(a: any, b: any) {
+  if (!a || !b) return false;
+  const da = new Date(a);
+  const db = new Date(b);
+  if (Number.isNaN(da.getTime()) || Number.isNaN(db.getTime())) return false;
+  return da.getTime() === db.getTime();
+}
+
+function interviewBelongsToSlot(interview: any, slot: any) {
+  const notes = String(interview?.notes || interview?.notas || "");
+  if (slot?.id && notes.includes(`Slot: ${slot.id}`)) return true;
+
+  const sameStart = sameDateTime(interviewStart(interview), slotStart(slot));
+  const sameJob =
+    !slotJobId(slot) ||
+    !interviewJobId(interview) ||
+    String(interviewJobId(interview)) === String(slotJobId(slot));
+
+  return sameStart && sameJob;
+}
+
+function attendeeFromInterview(interview: any) {
+  return {
+    id: `interview-${interview.id}`,
+    interview_id: interview.id,
+    lead_id: interview.lead_id || null,
+    candidate_id: interview.candidate_id || null,
+    name:
+      interview.candidate_name ||
+      interview.nome_candidato ||
+      interview.name ||
+      "Candidato",
+    phone:
+      interview.candidate_phone ||
+      interview.telefone_candidato ||
+      interview.phone ||
+      null,
+    email:
+      interview.candidate_email ||
+      interview.email_candidato ||
+      interview.email ||
+      null,
+    status: interview.status || "scheduled",
+    source: "rh_interviews",
+  };
+}
+
+function fallbackAttendeeFromSlot(slot: any) {
+  if (!slot?.reserved_name && !slot?.reserved_phone && !slot?.reserved_email && !slot?.lead_id) {
+    return null;
+  }
+
+  return {
+    id: `slot-${slot.id}`,
+    interview_id: null,
+    lead_id: slot.lead_id || null,
+    candidate_id: slot.candidate_id || null,
+    name: slot.reserved_name || "Candidato",
+    phone: slot.reserved_phone || null,
+    email: slot.reserved_email || null,
+    status: slot.status || "reserved",
+    source: "slot",
+  };
+}
+
+async function attachAttendeesToSlots(supabase: any, companyId: string, slots: any[]) {
+  if (!slots.length) return slots;
+
+  const starts = slots
+    .map((slot) => new Date(slotStart(slot)).getTime())
+    .filter((time) => !Number.isNaN(time));
+
+  if (!starts.length) {
+    return slots.map((slot) => {
+      const fallback = fallbackAttendeeFromSlot(slot);
+      return {
+        ...slot,
+        attendees: fallback ? [fallback] : [],
+      };
+    });
+  }
+
+  const from = new Date(Math.min(...starts) - 24 * 60 * 60 * 1000).toISOString();
+  const to = new Date(Math.max(...starts) + 24 * 60 * 60 * 1000).toISOString();
+
+  let interviews: any[] = [];
+
+  try {
+    const { data, error } = await supabase
+      .from("rh_interviews")
+      .select("*")
+      .eq("company_id", companyId)
+      .gte("start_at", from)
+      .lte("start_at", to)
+      .order("start_at", { ascending: true })
+      .limit(3000);
+
+    if (!error && Array.isArray(data)) interviews = data;
+    if (error) console.error("ATTACH ATTENDEES rh_interviews ERROR:", error);
+  } catch (error) {
+    console.error("ATTACH ATTENDEES rh_interviews FAILED:", error);
+  }
+
+  return slots.map((slot) => {
+    const attendees = interviews
+      .filter((interview) => interviewBelongsToSlot(interview, slot))
+      .map(attendeeFromInterview);
+
+    const seen = new Set<string>();
+    const unique = attendees.filter((person) => {
+      const key =
+        String(person.interview_id || "") ||
+        String(person.lead_id || "") ||
+        String(person.phone || "") ||
+        String(person.email || "");
+      if (!key) return true;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+
+    const fallback = fallbackAttendeeFromSlot(slot);
+    if (fallback) {
+      const hasFallback =
+        (fallback.lead_id && unique.some((person) => String(person.lead_id) === String(fallback.lead_id))) ||
+        (fallback.phone && unique.some((person) => normalizePhone(person.phone) === normalizePhone(fallback.phone))) ||
+        (fallback.email && unique.some((person) => normalizeText(person.email) === normalizeText(fallback.email)));
+
+      if (!hasFallback) unique.unshift(fallback);
+    }
+
+    return {
+      ...slot,
+      attendees: unique,
+      confirmed_candidates: unique,
+    };
+  });
+}
+
+async function updateLeadStatusForInterview({
+  supabase,
+  companyId,
+  leadId,
+  phone,
+  email,
+  status,
+  jobId,
+}: {
+  supabase: any;
+  companyId: string;
+  leadId?: string | null;
+  phone?: string | null;
+  email?: string | null;
+  status: string;
+  jobId?: string | null;
+}) {
+  const leadStatusMap: Record<string, string> = {
+    approved: "contratado",
+    rejected: "reprovado",
+    no_show: "nao_compareceu",
+    reschedule: "quer_agendar_entrevista",
+  };
+
+  const leadStatus = leadStatusMap[status] || status;
+
+  let query = supabase.from("leads").select("*").eq("company_id", companyId).limit(1);
+
+  if (leadId) {
+    query = query.eq("id", leadId);
+  } else if (phone) {
+    query = query.eq("phone", normalizePhone(phone));
+  } else if (email) {
+    query = query.eq("email", clean(email));
+  } else {
+    return null;
+  }
+
+  const { data: found } = await query.maybeSingle();
+
+  if (!found?.id) return null;
+
+  const { data, error } = await supabase
+    .from("leads")
+    .update({
+      status: leadStatus,
+      job_id: jobId || found.job_id || null,
+      current_job_id: jobId || found.current_job_id || found.job_id || null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", found.id)
+    .eq("company_id", companyId)
+    .select("*")
+    .maybeSingle();
+
+  if (error) {
+    console.error("UPDATE LEAD STATUS FROM INTERVIEW ERROR:", error);
+    return found;
+  }
+
+  return data || found;
+}
+
+async function updateCandidateInterviewStatus({
+  supabase,
+  companyId,
+  slot,
+  body,
+}: {
+  supabase: any;
+  companyId: string;
+  slot: any;
+  body: any;
+}) {
+  const status = clean(body.status);
+  const interviewId = clean(body.interviewId || body.interview_id);
+  const leadId = clean(body.leadId || body.lead_id);
+  const phone = normalizePhone(body.candidatePhone || body.phone);
+  const email = clean(body.candidateEmail || body.email);
+  const jobId = slotJobId(slot) || null;
+
+  const allowed = ["approved", "rejected", "no_show", "reschedule"];
+  if (!allowed.includes(status)) {
+    return { error: "Status de candidato inválido.", statusCode: 400 };
+  }
+
+  let interview: any = null;
+
+  if (interviewId) {
+    const { data, error } = await supabase
+      .from("rh_interviews")
+      .select("*")
+      .eq("company_id", companyId)
+      .eq("id", interviewId)
+      .maybeSingle();
+
+    if (error) console.error("FIND INTERVIEW BY ID ERROR:", error);
+    interview = data || null;
+  }
+
+  if (!interview && leadId) {
+    let query = supabase
+      .from("rh_interviews")
+      .select("*")
+      .eq("company_id", companyId)
+      .eq("lead_id", leadId)
+      .limit(1);
+
+    if (slotStart(slot)) query = query.eq("start_at", slotStart(slot));
+    if (jobId) query = query.eq("job_id", jobId);
+
+    const { data, error } = await query.maybeSingle();
+
+    if (error) console.error("FIND INTERVIEW BY LEAD ERROR:", error);
+    interview = data || null;
+  }
+
+  if (!interview && (phone || email)) {
+    let query = supabase
+      .from("rh_interviews")
+      .select("*")
+      .eq("company_id", companyId)
+      .eq("start_at", slotStart(slot))
+      .limit(20);
+
+    if (jobId) query = query.eq("job_id", jobId);
+
+    const { data, error } = await query;
+
+    if (error) console.error("FIND INTERVIEW BY PHONE/EMAIL ERROR:", error);
+
+    interview =
+      (data || []).find((item: any) => {
+        const samePhone =
+          phone &&
+          normalizePhone(item.candidate_phone || item.telefone_candidato || item.phone) === phone;
+        const sameEmail =
+          email &&
+          normalizeText(item.candidate_email || item.email_candidato || item.email) === normalizeText(email);
+        return samePhone || sameEmail;
+      }) || null;
+  }
+
+  const interviewStatus = status === "reschedule" ? "scheduled" : status;
+
+  if (interview?.id) {
+    const { error } = await supabase
+      .from("rh_interviews")
+      .update({
+        status: interviewStatus,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", interview.id)
+      .eq("company_id", companyId);
+
+    if (error) {
+      console.error("UPDATE INTERVIEW STATUS ERROR:", error);
+      return { error: error.message || "Erro ao atualizar entrevista.", statusCode: 500 };
+    }
+  }
+
+  const finalLeadId = leadId || interview?.lead_id || null;
+  const finalPhone = phone || normalizePhone(interview?.candidate_phone || interview?.phone) || null;
+  const finalEmail = email || interview?.candidate_email || interview?.email || null;
+
+  const lead = await updateLeadStatusForInterview({
+    supabase,
+    companyId,
+    leadId: finalLeadId,
+    phone: finalPhone,
+    email: finalEmail,
+    status,
+    jobId,
+  });
+
+  if (!interview?.id && !lead?.id) {
+    return {
+      error: "Não encontrei esse candidato nos agendados. Atualize a página e tente novamente.",
+      statusCode: 404,
+    };
+  }
+
+  return {
+    success: true,
+    interview,
+    lead,
+  };
+}
+
+
 export async function GET(req: NextRequest) {
   try {
     const supabase = getSupabase();
@@ -210,106 +564,11 @@ export async function GET(req: NextRequest) {
     const { data, error } = await query;
     if (error) throw new Error(error.message);
 
-    const slots = data || [];
-
-    // Agenda compartilhada:
-    // o slot permanece o mesmo para vários candidatos. Para o painel mostrar
-    // quem já confirmou, buscamos as entrevistas geradas pelo book/route.ts
-    // e anexamos cada candidato ao respectivo horário.
-    let interviews: any[] = [];
-
-    if (slots.length) {
-      const { data: interviewData, error: interviewError } = await supabase
-        .from("rh_interviews")
-        .select(
-          "id, lead_id, candidate_id, job_id, batch_id, candidate_name, candidate_phone, candidate_email, status, start_at, end_at, notes, created_at"
-        )
-        .eq("company_id", companyId)
-        .order("created_at", { ascending: false })
-        .limit(5000);
-
-      if (interviewError) {
-        console.warn("AVISO: não foi possível carregar candidatos confirmados:", interviewError);
-      } else {
-        interviews = interviewData || [];
-      }
-    }
-
-    function sameDateTime(a?: string | null, b?: string | null) {
-      if (!a || !b) return false;
-      const da = new Date(a).getTime();
-      const db = new Date(b).getTime();
-      if (Number.isNaN(da) || Number.isNaN(db)) return false;
-      return da === db;
-    }
-
-    function interviewBelongsToSlot(interview: any, slot: any) {
-      const notes = String(interview.notes || "");
-      if (slot.id && notes.includes(`Slot: ${slot.id}`)) return true;
-
-      const sameStart = sameDateTime(interview.start_at, slot.start_at);
-      const sameJob =
-        !slot.job_id ||
-        !interview.job_id ||
-        String(interview.job_id) === String(slot.job_id);
-
-      return sameStart && sameJob;
-    }
-
-    const slotsWithAttendees = slots.map((slot: any) => {
-      const attendeesMap = new Map<string, any>();
-
-      for (const interview of interviews) {
-        if (!interviewBelongsToSlot(interview, slot)) continue;
-
-        const key =
-          interview.lead_id ||
-          interview.candidate_id ||
-          interview.candidate_phone ||
-          interview.candidate_email ||
-          interview.id;
-
-        if (!attendeesMap.has(String(key))) {
-          attendeesMap.set(String(key), {
-            id: interview.id,
-            lead_id: interview.lead_id,
-            candidate_id: interview.candidate_id,
-            name: interview.candidate_name || "Candidato",
-            phone: interview.candidate_phone || null,
-            email: interview.candidate_email || null,
-            status: interview.status || null,
-            created_at: interview.created_at || null,
-          });
-        }
-      }
-
-      if (slot.reserved_name || slot.reserved_phone || slot.reserved_email) {
-        const key = slot.lead_id || slot.reserved_phone || slot.reserved_email || "reserved";
-        if (!attendeesMap.has(String(key))) {
-          attendeesMap.set(String(key), {
-            id: slot.lead_id || null,
-            lead_id: slot.lead_id || null,
-            name: slot.reserved_name || "Candidato",
-            phone: slot.reserved_phone || null,
-            email: slot.reserved_email || null,
-            status: slot.status || null,
-            created_at: slot.reserved_at || null,
-          });
-        }
-      }
-
-      const attendees = Array.from(attendeesMap.values());
-      const agendaType = clean(slot.agenda_type || slot.agendaType) || "individual";
-      const reservedCount = Math.max(Number(slot.reserved_count || 0), attendees.length);
-
-      return {
-        ...slot,
-        attendees,
-        confirmed_candidates: attendees,
-        confirmed_candidates_count: reservedCount,
-        reserved_count: agendaType === "shared" ? reservedCount : slot.reserved_count,
-      };
-    });
+    const slotsWithAttendees = await attachAttendeesToSlots(
+      supabase,
+      companyId,
+      data || []
+    );
 
     return NextResponse.json({ success: true, slots: slotsWithAttendees });
   } catch (error: any) {
@@ -435,6 +694,39 @@ export async function PATCH(req: NextRequest) {
 
     const id = clean(body.id);
     if (!id) return NextResponse.json({ error: "ID obrigatório." }, { status: 400 });
+
+    const { data: currentSlot, error: currentSlotError } = await supabase
+      .from("rh_interview_slots")
+      .select("*")
+      .eq("id", id)
+      .eq("company_id", companyId)
+      .maybeSingle();
+
+    if (currentSlotError) {
+      console.error("FIND SLOT BEFORE PATCH ERROR:", currentSlotError);
+    }
+
+    if (!currentSlot) {
+      return NextResponse.json({ error: "Horário não encontrado." }, { status: 404 });
+    }
+
+    if (body.candidateAction === true) {
+      const result = await updateCandidateInterviewStatus({
+        supabase,
+        companyId,
+        slot: currentSlot,
+        body,
+      });
+
+      if (result?.error) {
+        return NextResponse.json(
+          { error: result.error },
+          { status: result.statusCode || 500 }
+        );
+      }
+
+      return NextResponse.json({ success: true, ...result });
+    }
 
     const update: any = { updated_at: new Date().toISOString() };
 
