@@ -650,38 +650,74 @@ async function getNextAvailableSlot(
   leadId?: string | null,
   batchId?: string | null
 ) {
-  const now = new Date().toISOString();
+  const now = new Date();
 
   const { data, error } = await supabase
     .from("rh_interview_slots")
     .select("*")
-    .eq("id_da_empresa", companyId)
-    .in("status", ["available", "disponível", "disponivel"])
-    .not("token", "is", null)
-    .gte("comecar_em", now)
-    .order("comecar_em", { ascending: true })
-    .limit(50);
+    .limit(300);
 
   if (error) {
-    console.error("ERRO BUSCAR SLOTS DISPONIVEIS:", error);
+    console.error("ERRO BUSCAR SLOTS:", error);
     return null;
   }
 
   const slots = data || [];
 
-  const slotByJob = slots.find((slot: any) => {
-    return String(slot?.id_do_trabalho || "") === String(jobId || "");
-  });
+  console.log("SLOTS ENCONTRADOS:", slots.length);
+  console.log("EXEMPLO SLOT:", slots[0]);
+
+  const getCompanyId = (slot: any) =>
+    slot.id_da_empresa || slot.company_id || slot.companyId;
+
+  const getJobId = (slot: any) =>
+    slot.id_do_trabalho || slot.job_id || slot.jobId;
+
+  const getBatchId = (slot: any) =>
+    slot.id_do_lote || slot.batch_id || slot.batchId;
+
+  const getDate = (slot: any) =>
+    slot.comecar_em || slot.start_at || slot.starts_at || slot.startAt;
+
+  const availableSlots = slots
+    .filter((slot: any) => {
+      const status = String(slot.status || "").toLowerCase();
+      const token = slot.token || slot.id;
+
+      const isAvailable =
+        status === "available" ||
+        status === "disponível" ||
+        status === "disponivel" ||
+        status === "livre" ||
+        status === "";
+
+      const slotDate = getDate(slot);
+      const isFuture = slotDate ? new Date(slotDate) >= now : true;
+
+      const sameCompany =
+        !companyId || String(getCompanyId(slot) || "") === String(companyId);
+
+      return token && isAvailable && isFuture && sameCompany;
+    })
+    .sort((a: any, b: any) => {
+      const dateA = new Date(getDate(a) || 0).getTime();
+      const dateB = new Date(getDate(b) || 0).getTime();
+      return dateA - dateB;
+    });
+
+  const slotByJob = availableSlots.find((slot: any) =>
+    String(getJobId(slot) || "") === String(jobId || "")
+  );
 
   if (slotByJob) return slotByJob;
 
-  const slotByBatch = slots.find((slot: any) => {
-    return String(slot?.id_do_lote || "") === String(batchId || "");
-  });
+  const slotByBatch = availableSlots.find((slot: any) =>
+    String(getBatchId(slot) || "") === String(batchId || "")
+  );
 
   if (slotByBatch) return slotByBatch;
 
-  return slots[0] || null;
+  return availableSlots[0] || null;
 }
   
 
