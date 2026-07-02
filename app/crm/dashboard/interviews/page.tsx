@@ -485,8 +485,9 @@ export default function AvailabilityPage() {
 
   async function updateCandidateStatus(slot: any, person: any, status: string) {
     const confirmText: Record<string, string> = {
+      confirmed: `Confirmar presença de ${person?.name || "este candidato"}?`,
       approved: `Aprovar ${person?.name || "este candidato"}?`,
-      rejected: `Marcar ${person?.name || "este candidato"} como não aprovado?`,
+rejected: `Marcar ${person?.name || "este candidato"} como não aprovado?`,
       no_show: `Marcar ${person?.name || "este candidato"} como não compareceu?`,
       reschedule: `Reagendar ${person?.name || "este candidato"}?`,
     };
@@ -1025,6 +1026,15 @@ export default function AvailabilityPage() {
                           </div>
 
                           <div style={styles.attendeeActions}>
+                            {!["confirmed", "approved", "rejected", "no_show"].includes(personStatus) && (
+                              <button
+                                style={styles.primarySmallButton}
+                                onClick={() => updateCandidateStatus(slot, person, "confirmed")}
+                              >
+                                Confirmar
+                              </button>
+                            )}
+
                             <button
                               style={styles.successButton}
                               onClick={() => updateCandidateStatus(slot, person, "approved")}
@@ -1070,22 +1080,6 @@ export default function AvailabilityPage() {
                   <button style={styles.secondaryButton} onClick={() => openEdit(slot)}>
                     Editar
                   </button>
-
-                  {!isShared && (slot.status === "reserved" || slot.status === "confirmed") && (
-                    <>
-                      <button style={styles.successButton} onClick={() => updateSlotStatus(slot, "approved")}>
-                        Aprovado
-                      </button>
-
-                      <button style={styles.secondaryButton} onClick={() => updateSlotStatus(slot, "available")}>
-                        Reagendar
-                      </button>
-
-                      <button style={styles.dangerButton} onClick={() => updateSlotStatus(slot, "rejected")}>
-                        Não aprovado
-                      </button>
-                    </>
-                  )}
 
                   {slot.status === "cancelled" ? (
                     <button style={styles.primarySmallButton} onClick={() => restoreSlot(slot)}>

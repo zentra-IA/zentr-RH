@@ -362,6 +362,7 @@ async function updateLeadStatusForInterview({
   jobId?: string | null;
 }) {
   const leadStatusMap: Record<string, string> = {
+    confirmed: "entrevista_confirmada",
     approved: "contratado",
     rejected: "reprovado",
     no_show: "nao_compareceu",
@@ -464,6 +465,132 @@ async function updateLeadStatusForInterview({
   return data || found;
 }
 
+
+async function createOrUpdateHiringFromInterviewAction({
+  supabase,
+  companyId,
+  slot,
+  candidate,
+  lead,
+  status,
+}: {
+  supabase: any;
+  companyId: string;
+  slot: any;
+  candidate?: any;
+  lead?: any;
+  status: string;
+}) {
+  if (status !== "approved") return null;
+
+  const jobId = slotJobId(slot) || lead?.job_id || lead?.current_job_id || candidate?.job_id || null;
+  const candidatePhone = normalizePhone(candidate?.phone || lead?.phone || slot?.reserved_phone || "");
+  const candidateEmail = normalizeText(candidate?.email || lead?.email || slot?.reserved_email || "");
+  const candidateName =
+    clean(candidate?.name || lead?.name || slot?.reserved_name) || "Candidato";
+
+  if (!candidateName && !candidatePhone && !candidateEmail && !lead?.id) {
+    return null;
+  }
+
+  let jobTitle = clean(slot?.title || "");
+  if (!jobTitle && jobId) {
+    jobTitle = await getJobTitle(supabase, companyId, jobId);
+  }
+  if (!jobTitle) jobTitle = "Sem vaga informada";
+
+  const payload: any = {
+    company_id: companyId,
+    branch_id: slot?.branch_id || lead?.branch_id || null,
+    lead_id: lead?.id || candidate?.lead_id || null,
+    candidate_id: candidate?.candidate_id || null,
+    job_id: jobId,
+    batch_id: slot?.batch_id || lead?.batch_id || candidate?.batch_id || null,
+    interview_id: candidate?.interview_id || null,
+    candidate_name: candidateName,
+    candidate_phone: candidatePhone || null,
+    candidate_email: candidateEmail || null,
+    phone: candidatePhone || null,
+    email: candidateEmail || null,
+    job_title: jobTitle,
+    status: "approved",
+    hired_at: new Date().toISOString(),
+    start_date: new Date().toISOString().slice(0, 10),
+    meeting_url: slot?.meeting_url || null,
+    notes: "Criado automaticamente ao aprovar entrevista.",
+    updated_at: new Date().toISOString(),
+  };
+
+  // Busca contratação existente sem depender de campos instáveis.
+  let existing: any = null;
+
+  if (payload.lead_id) {
+    const { data } = await supabase
+      .from("rh_hirings")
+      .select("*")
+      .eq("company_id", companyId)
+      .eq("lead_id", payload.lead_id)
+      .limit(1)
+      .maybeSingle();
+    existing = data || null;
+  }
+
+  if (!existing && payload.candidate_phone) {
+    const { data } = await supabase
+      .from("rh_hirings")
+      .select("*")
+      .eq("company_id", companyId)
+      .eq("candidate_phone", payload.candidate_phone)
+      .limit(1)
+      .maybeSingle();
+    existing = data || null;
+  }
+
+  if (!existing && payload.candidate_email) {
+    const { data } = await supabase
+      .from("rh_hirings")
+      .select("*")
+      .eq("company_id", companyId)
+      .ilike("candidate_email", payload.candidate_email)
+      .limit(1)
+      .maybeSingle();
+    existing = data || null;
+  }
+
+  if (existing?.id) {
+    const { data, error } = await supabase
+      .from("rh_hirings")
+      .update(payload)
+      .eq("id", existing.id)
+      .eq("company_id", companyId)
+      .select("*")
+      .maybeSingle();
+
+    if (error) {
+      console.error("UPDATE HIRING FROM INTERVIEW ACTION ERROR:", error);
+      return null;
+    }
+
+    return data || existing;
+  }
+
+  const { data, error } = await supabase
+    .from("rh_hirings")
+    .insert({
+      ...payload,
+      created_at: new Date().toISOString(),
+    })
+    .select("*")
+    .maybeSingle();
+
+  if (error) {
+    console.error("CREATE HIRING FROM INTERVIEW ACTION ERROR:", error);
+    return null;
+  }
+
+  return data || null;
+}
+
 async function updateSharedAttendeeStatus({
   supabase,
   companyId,
@@ -483,7 +610,7 @@ async function updateSharedAttendeeStatus({
       body.interview_id
   );
 
-  const allowed = ["approved", "rejected", "no_show", "reschedule"];
+  const allowed = ["confirmed", "approved", "rejected", "no_show", "reschedule"];
   if (!allowed.includes(status)) {
     return { error: "Status de candidato inválido.", statusCode: 400 };
   }
@@ -502,10 +629,25 @@ async function updateSharedAttendeeStatus({
       jobId: slotJobId(slot) || null,
     });
 
+    const hiring = await createOrUpdateHiringFromInterviewAction({
+      supabase,
+      companyId,
+      slot,
+      candidate: {
+        name: slot.reserved_name,
+        phone: slot.reserved_phone,
+        email: slot.reserved_email,
+        lead_id: slot.lead_id || null,
+      },
+      lead,
+      status,
+    });
+
     return {
       success: true,
       attendee: null,
       lead,
+      hiring,
       fallback: true,
     };
   }
@@ -543,10 +685,20 @@ async function updateSharedAttendeeStatus({
     jobId: slotJobId(slot) || null,
   });
 
+  const hiring = await createOrUpdateHiringFromInterviewAction({
+    supabase,
+    companyId,
+    slot,
+    candidate: attendee,
+    lead,
+    status,
+  });
+
   return {
     success: true,
     attendee,
     lead,
+    hiring,
   };
 }
 
@@ -573,7 +725,7 @@ async function updateCandidateInterviewStatus({
   const email = clean(body.candidateEmail || body.email);
   const jobId = slotJobId(slot) || null;
 
-  const allowed = ["approved", "rejected", "no_show", "reschedule"];
+  const allowed = ["confirmed", "approved", "rejected", "no_show", "reschedule"];
   if (!allowed.includes(status)) {
     return { error: "Status de candidato inválido.", statusCode: 400 };
   }
@@ -588,7 +740,22 @@ async function updateCandidateInterviewStatus({
     jobId,
   });
 
+  const hiring = await createOrUpdateHiringFromInterviewAction({
+    supabase,
+    companyId,
+    slot,
+    candidate: {
+      name: slot.reserved_name,
+      phone: phone || slot.reserved_phone || null,
+      email: email || slot.reserved_email || null,
+      lead_id: leadId || slot.lead_id || null,
+    },
+    lead,
+    status,
+  });
+
   const slotStatusMap: Record<string, string> = {
+    confirmed: "confirmed",
     approved: "approved",
     rejected: "rejected",
     no_show: "no_show",
@@ -624,6 +791,7 @@ async function updateCandidateInterviewStatus({
     success: true,
     interview: null,
     lead,
+    hiring,
   };
 }
 
