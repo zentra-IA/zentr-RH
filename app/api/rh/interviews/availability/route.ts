@@ -364,7 +364,7 @@ async function updateLeadStatusForInterview({
   const leadStatusMap: Record<string, string> = {
     confirmed: "entrevista_confirmada",
     approved: "contratado",
-    rejected: "reprovado",
+    rejected: "nao_aprovado",
     no_show: "nao_compareceu",
     reschedule: "quer_agendar_entrevista",
   };

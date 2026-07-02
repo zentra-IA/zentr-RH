@@ -32,6 +32,28 @@ function normalizePhone(value: any) {
   return digits;
 }
 
+function normalizeWhatsappRecipient(value: any) {
+  const raw = clean(value);
+
+  // Se vier JID/LID do WhatsApp, preserva o identificador.
+  // Isso é importante para leads que não possuem telefone comum salvo,
+  // mas possuem remote_jid ou whatsapp_lid.
+  if (raw.includes("@lid") || raw.includes("@s.whatsapp.net")) {
+    return raw;
+  }
+
+  return normalizePhone(raw);
+}
+
+function leadWhatsappRecipient(lead: any, fallback?: any) {
+  return (
+    normalizeWhatsappRecipient(lead?.phone) ||
+    normalizeWhatsappRecipient(lead?.remote_jid) ||
+    normalizeWhatsappRecipient(lead?.whatsapp_lid) ||
+    normalizeWhatsappRecipient(fallback)
+  );
+}
+
 function buildSession(companyId: string) {
   return `${companyId}_${RH_REMINDER_SESSION}`;
 }
@@ -94,7 +116,7 @@ async function safeSendWhatsapp({
   phone: string;
   message: string;
 }) {
-  const finalPhone = normalizePhone(phone);
+  const finalPhone = normalizeWhatsappRecipient(phone);
 
   if (!WHATSAPP_SERVER || !finalPhone) {
     return { sent: false, error: "WhatsApp server ou telefone ausente." };
@@ -886,9 +908,21 @@ export async function POST(req: NextRequest) {
 
     const candidateResult = await safeSendWhatsapp({
       companyId: slot.company_id,
-      phone: updatedLead.phone || "",
+      phone: leadWhatsappRecipient(updatedLead, slot.reserved_phone),
       message: candidateConfirmationMessage(slot, updatedLead),
     });
+
+    if (!candidateResult.sent) {
+      console.error("CANDIDATE CONFIRMATION WHATSAPP NOT SENT:", {
+        leadId: updatedLead?.id,
+        leadName: updatedLead?.name,
+        phone: updatedLead?.phone,
+        remote_jid: updatedLead?.remote_jid,
+        whatsapp_lid: updatedLead?.whatsapp_lid,
+        fallback: slot.reserved_phone,
+        error: candidateResult.error,
+      });
+    }
 
     let recruiterResult = {
       sent: false,

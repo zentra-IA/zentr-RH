@@ -34,6 +34,12 @@ function normalizePhone(value: any) {
   return digits;
 }
 
+function normalizeWhatsappRecipient(value: any) {
+  const raw = clean(value);
+  if (raw.includes("@lid") || raw.includes("@s.whatsapp.net")) return raw;
+  return normalizePhone(raw);
+}
+
 function normalizeText(value: any) {
   return clean(value).toLowerCase();
 }
@@ -86,7 +92,7 @@ async function safeSendWhatsapp({
   phone: string;
   message: string;
 }) {
-  const finalPhone = normalizePhone(phone);
+  const finalPhone = normalizeWhatsappRecipient(phone);
 
   if (!WHATSAPP_SERVER || !finalPhone) {
     return { sent: false, error: "WhatsApp server ou telefone ausente." };
