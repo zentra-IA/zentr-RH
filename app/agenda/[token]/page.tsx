@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 
 function formatDate(value: string) {
   const date = new Date(value);
@@ -46,7 +46,9 @@ function groupByDay(slots: any[]) {
 
 export default function PublicAgendaPage() {
   const params = useParams();
+  const searchParams = useSearchParams();
   const token = String(params.token || "");
+  const leadIdFromUrl = searchParams.get("leadId") || searchParams.get("lead_id") || "";
 
   const [slots, setSlots] = useState<any[]>([]);
   const [baseSlot, setBaseSlot] = useState<any>(null);
@@ -68,7 +70,11 @@ export default function PublicAgendaPage() {
       setLoading(true);
       setErrorMessage("");
 
-      const res = await fetch(`/api/rh/interviews/book?token=${token}`, {
+      const query = leadIdFromUrl
+        ? `/api/rh/interviews/book?token=${encodeURIComponent(token)}&leadId=${encodeURIComponent(leadIdFromUrl)}`
+        : `/api/rh/interviews/book?token=${encodeURIComponent(token)}`;
+
+      const res = await fetch(query, {
         cache: "no-store",
       });
 
@@ -138,7 +144,7 @@ export default function PublicAgendaPage() {
         body: JSON.stringify({
           selectedToken,
           contextToken: token,
-          leadId: lead?.id || baseSlot?.lead_id || null,
+          leadId: lead?.id || leadIdFromUrl || baseSlot?.lead_id || null,
           name: candidateForm.name,
           phone: candidateForm.phone,
           email: candidateForm.email,

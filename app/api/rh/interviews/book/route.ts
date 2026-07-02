@@ -311,9 +311,11 @@ async function resolveLeadForBooking({
   const isSharedAgenda = agendaType === "shared";
 
   let lead =
+    // O leadId vindo do link/post tem prioridade máxima na agenda individual.
+    // Sem isso, o sistema pode cair no candidato errado quando vários candidatos usam a mesma vaga.
+    (await getLeadById(supabase, companyId, bodyLeadId)) ||
     (await getLeadById(supabase, companyId, selectedSlot.lead_id)) ||
-    (await getLeadById(supabase, companyId, contextSlot?.lead_id)) ||
-    (await getLeadById(supabase, companyId, bodyLeadId));
+    (await getLeadById(supabase, companyId, contextSlot?.lead_id));
 
   if (lead?.id) return lead;
 
@@ -590,6 +592,12 @@ export async function GET(req: NextRequest) {
     const supabase = getSupabase();
     const { searchParams } = new URL(req.url);
     const token = clean(searchParams.get("token"));
+    const leadIdFromUrl = clean(
+      searchParams.get("leadId") ||
+        searchParams.get("lead_id") ||
+        searchParams.get("candidateId") ||
+        searchParams.get("candidate_id")
+    );
 
     if (!token) {
       return NextResponse.json({ error: "Token obrigatório." }, { status: 400 });
@@ -613,17 +621,33 @@ export async function GET(req: NextRequest) {
     // porque o mesmo link é enviado para vários candidatos.
     // Nesse caso a página pública pede telefone/e-mail para identificar o candidato no POST.
     if (!isSharedAgenda) {
-      lead = slot.lead_id
-        ? await getLeadById(supabase, slot.company_id, slot.lead_id)
-        : null;
+      // Agenda individual precisa respeitar o leadId que veio no link.
+      // Isso evita abrir o link da Júlia mostrando Gregory por causa do fallback da fila.
+      lead =
+        (await getLeadById(supabase, slot.company_id, leadIdFromUrl)) ||
+        (slot.lead_id
+          ? await getLeadById(supabase, slot.company_id, slot.lead_id)
+          : null);
 
-      if (!lead?.id) {
+      // Fallback mantido apenas para links antigos sem leadId.
+      if (!lead?.id && !leadIdFromUrl) {
         lead = await findLeadFromQueueContext({
           supabase,
           companyId: slot.company_id,
           jobId: slot.job_id,
           batchId: slot.batch_id,
         });
+      }
+
+      if (!lead?.id && leadIdFromUrl) {
+        return NextResponse.json(
+          {
+            error:
+              "Não foi possível identificar o candidato pelo link. Envie novamente o convite pelo WhatsApp.",
+            code: "LEAD_CONTEXT_NOT_FOUND",
+          },
+          { status: 400 }
+        );
       }
     }
 
