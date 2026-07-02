@@ -307,6 +307,8 @@ async function resolveLeadForBooking({
 }) {
   const companyId = selectedSlot.company_id;
   const bodyLeadId = clean(body.leadId || body.lead_id);
+  const agendaType = clean(selectedSlot.agenda_type || selectedSlot.agendaType) || "individual";
+  const isSharedAgenda = agendaType === "shared";
 
   let lead =
     (await getLeadById(supabase, companyId, selectedSlot.lead_id)) ||
@@ -315,24 +317,74 @@ async function resolveLeadForBooking({
 
   if (lead?.id) return lead;
 
+  const phoneFromBody =
+    body.phone ||
+    body.telefone ||
+    selectedSlot.reserved_phone ||
+    contextSlot?.reserved_phone;
+
+  const emailFromBody =
+    body.email ||
+    selectedSlot.reserved_email ||
+    contextSlot?.reserved_email;
+
   lead = await findLeadByFallbacks({
     supabase,
     companyId,
-    phone:
-      body.phone ||
-      body.telefone ||
-      selectedSlot.reserved_phone ||
-      contextSlot?.reserved_phone,
-    email:
-      body.email ||
-      selectedSlot.reserved_email ||
-      contextSlot?.reserved_email,
+    phone: phoneFromBody,
+    email: emailFromBody,
   });
 
   if (lead?.id) return lead;
 
-  // Fallback principal para link público gerado por vaga/lote:
-  // quando o slot não carrega lead_id, recupera o último lead do lote/fila.
+  if (isSharedAgenda) {
+    const name = clean(body.name || body.nome) || "Candidato";
+    const phone = normalizePhone(phoneFromBody);
+    const email = clean(emailFromBody).toLowerCase();
+
+    if (!phone && !email) return null;
+
+    try {
+      const { data, error } = await supabase
+        .from("leads")
+        .insert({
+          company_id: companyId,
+          name,
+          phone: phone || null,
+          email: email || null,
+          status: "entrevista_confirmada",
+          job_id: selectedSlot.job_id || contextSlot?.job_id || null,
+          current_job_id: selectedSlot.job_id || contextSlot?.job_id || null,
+          batch_id: selectedSlot.batch_id || contextSlot?.batch_id || null,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        })
+        .select("*")
+        .maybeSingle();
+
+      if (error) {
+        console.error("CREATE LEAD FOR SHARED BOOKING ERROR:", error);
+        return {
+          id: null,
+          company_id: companyId,
+          name,
+          phone,
+          email,
+          job_id: selectedSlot.job_id || contextSlot?.job_id || null,
+          current_job_id: selectedSlot.job_id || contextSlot?.job_id || null,
+          batch_id: selectedSlot.batch_id || contextSlot?.batch_id || null,
+        };
+      }
+
+      return data || null;
+    } catch (error) {
+      console.error("CREATE LEAD FOR SHARED BOOKING FAILED:", error);
+      return null;
+    }
+  }
+
+  // Fallback antigo fica APENAS para agenda individual.
+  // Na agenda compartilhada ele causava o erro de puxar Gregory no link da Julia.
   lead = await findLeadFromQueueContext({
     supabase,
     companyId,
@@ -404,51 +456,79 @@ async function updateLeadAfterBooking({
 }
 
 async function createInterviewFromSlot(supabase: any, slot: any, lead: any) {
+  // Mantido como no-op seguro.
+  // A tabela rh_interviews do projeto atual não possui colunas como lead_id/start_at.
+  // A confirmação da agenda já atualiza o lead e o slot.
+  // Para agenda compartilhada, os participantes são salvos em rh_shared_interview_attendees.
+  return;
+}
+
+async function createOrUpdateSharedAttendee(supabase: any, slot: any, lead: any) {
+  const phone = normalizePhone(lead.phone || slot.reserved_phone || "");
+  const email = clean(lead.email || slot.reserved_email || "").toLowerCase();
+
   try {
-    let existingQuery = supabase
-      .from("rh_interviews")
-      .select("id")
+    const { data: existingRows, error: findError } = await supabase
+      .from("rh_shared_interview_attendees")
+      .select("*")
       .eq("company_id", slot.company_id)
-      .eq("lead_id", lead.id)
-      .eq("start_at", slot.start_at)
-      .limit(1);
+      .eq("slot_id", slot.id)
+      .limit(500);
 
-    if (slot.job_id) existingQuery = existingQuery.eq("job_id", slot.job_id);
+    if (findError) {
+      console.error("FIND SHARED ATTENDEE ERROR:", findError);
+    }
 
-    const { data: existing } = await existingQuery.maybeSingle();
+    const existing =
+      (existingRows || []).find((row: any) => {
+        const sameLead = row.lead_id && lead.id && String(row.lead_id) === String(lead.id);
+        const samePhone = phone && normalizePhone(row.phone) === phone;
+        const sameEmail = email && clean(row.email).toLowerCase() === email;
+        return sameLead || samePhone || sameEmail;
+      }) || null;
 
-    if (existing?.id) return;
-
-    const { error } = await supabase.from("rh_interviews").insert({
+    const payload = {
       company_id: slot.company_id,
-      branch_id: slot.branch_id || lead.branch_id || null,
-      candidate_id: slot.candidate_id || null,
-      lead_id: lead.id,
+      slot_id: slot.id,
       job_id: slot.job_id || lead.job_id || lead.current_job_id || null,
       batch_id: slot.batch_id || lead.batch_id || null,
-
-      title: slot.title || "Entrevista",
-      start_at: slot.start_at,
-      end_at: slot.end_at,
-
-      candidate_name: lead.name || slot.reserved_name || "Candidato",
-      candidate_phone: lead.phone || slot.reserved_phone || null,
-      candidate_email: lead.email || slot.reserved_email || null,
-
-      recruiter_name: slot.recruiter_name || null,
-      recruiter_phone: slot.recruiter_phone || null,
-      meeting_url: slot.meeting_url || null,
-      location: slot.location || null,
-
-      status: "scheduled",
-      notes: `Criada automaticamente pela agenda pública. Slot: ${slot.id}`,
-      created_at: new Date().toISOString(),
+      lead_id: lead.id || null,
+      name: lead.name || slot.reserved_name || "Candidato",
+      phone: phone || null,
+      email: email || null,
+      status: "confirmed",
       updated_at: new Date().toISOString(),
-    });
+    };
 
-    if (error) console.error("ERRO AO CRIAR ENTREVISTA PELO SLOT:", error);
+    if (existing?.id) {
+      const { error } = await supabase
+        .from("rh_shared_interview_attendees")
+        .update(payload)
+        .eq("id", existing.id)
+        .eq("company_id", slot.company_id);
+
+      if (error) console.error("UPDATE SHARED ATTENDEE ERROR:", error);
+      return existing.id;
+    }
+
+    const { data, error } = await supabase
+      .from("rh_shared_interview_attendees")
+      .insert({
+        ...payload,
+        created_at: new Date().toISOString(),
+      })
+      .select("id")
+      .maybeSingle();
+
+    if (error) {
+      console.error("INSERT SHARED ATTENDEE ERROR:", error);
+      return null;
+    }
+
+    return data?.id || null;
   } catch (error) {
-    console.error("ERRO IGNORADO AO CRIAR ENTREVISTA PELO SLOT:", error);
+    console.error("CREATE SHARED ATTENDEE FAILED:", error);
+    return null;
   }
 }
 
@@ -765,7 +845,11 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    await createInterviewFromSlot(supabase, slot, updatedLead);
+    if (isSharedAgenda) {
+      await createOrUpdateSharedAttendee(supabase, slot, updatedLead);
+    } else {
+      await createInterviewFromSlot(supabase, slot, updatedLead);
+    }
 
     const candidateResult = await safeSendWhatsapp({
       companyId: slot.company_id,

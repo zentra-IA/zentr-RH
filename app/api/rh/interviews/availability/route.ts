@@ -281,73 +281,65 @@ function fallbackAttendeeFromSlot(slot: any) {
 async function attachAttendeesToSlots(supabase: any, companyId: string, slots: any[]) {
   if (!slots.length) return slots;
 
-  const starts = slots
-    .map((slot) => new Date(slotStart(slot)).getTime())
-    .filter((time) => !Number.isNaN(time));
+  const sharedSlots = slots.filter(
+    (slot) => clean(slot.agenda_type || slot.agendaType) === "shared"
+  );
+  const sharedSlotIds = sharedSlots.map((slot) => slot.id).filter(Boolean);
 
-  if (!starts.length) {
-    return slots.map((slot) => {
-      const fallback = fallbackAttendeeFromSlot(slot);
-      return {
-        ...slot,
-        attendees: fallback ? [fallback] : [],
-      };
-    });
-  }
+  let sharedAttendees: any[] = [];
 
-  const from = new Date(Math.min(...starts) - 24 * 60 * 60 * 1000).toISOString();
-  const to = new Date(Math.max(...starts) + 24 * 60 * 60 * 1000).toISOString();
+  if (sharedSlotIds.length) {
+    try {
+      const { data, error } = await supabase
+        .from("rh_shared_interview_attendees")
+        .select("*")
+        .in("slot_id", sharedSlotIds)
+        .order("created_at", { ascending: true })
+        .limit(3000);
 
-  let interviews: any[] = [];
-
-  try {
-    const { data, error } = await supabase
-      .from("rh_interviews")
-      .select("*")
-      .eq("company_id", companyId)
-      .gte("start_at", from)
-      .lte("start_at", to)
-      .order("start_at", { ascending: true })
-      .limit(3000);
-
-    if (!error && Array.isArray(data)) interviews = data;
-    if (error) console.error("ATTACH ATTENDEES rh_interviews ERROR:", error);
-  } catch (error) {
-    console.error("ATTACH ATTENDEES rh_interviews FAILED:", error);
+      if (error) {
+        console.error("ATTACH SHARED ATTENDEES ERROR:", error);
+      } else {
+        sharedAttendees = data || [];
+      }
+    } catch (error) {
+      console.error("ATTACH SHARED ATTENDEES FAILED:", error);
+    }
   }
 
   return slots.map((slot) => {
-    const attendees = interviews
-      .filter((interview) => interviewBelongsToSlot(interview, slot))
-      .map(attendeeFromInterview);
+    const isShared = clean(slot.agenda_type || slot.agendaType) === "shared";
 
-    const seen = new Set<string>();
-    const unique = attendees.filter((person) => {
-      const key =
-        String(person.interview_id || "") ||
-        String(person.lead_id || "") ||
-        String(person.phone || "") ||
-        String(person.email || "");
-      if (!key) return true;
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
+    if (isShared) {
+      const attendees = sharedAttendees
+        .filter((row: any) => String(row.slot_id) === String(slot.id))
+        .filter((row: any) => String(row.status || "").toLowerCase() !== "cancelled")
+        .map((row: any) => ({
+          id: row.id,
+          attendee_id: row.id,
+          lead_id: row.lead_id || null,
+          candidate_id: null,
+          name: row.name || "Candidato",
+          phone: row.phone || null,
+          email: row.email || null,
+          status: row.status || "confirmed",
+          source: "rh_shared_interview_attendees",
+        }));
+
+      return {
+        ...slot,
+        reserved_count: attendees.length,
+        attendees,
+        confirmed_candidates: attendees,
+      };
+    }
 
     const fallback = fallbackAttendeeFromSlot(slot);
-    if (fallback) {
-      const hasFallback =
-        (fallback.lead_id && unique.some((person) => String(person.lead_id) === String(fallback.lead_id))) ||
-        (fallback.phone && unique.some((person) => normalizePhone(person.phone) === normalizePhone(fallback.phone))) ||
-        (fallback.email && unique.some((person) => normalizeText(person.email) === normalizeText(fallback.email)));
-
-      if (!hasFallback) unique.unshift(fallback);
-    }
 
     return {
       ...slot,
-      attendees: unique,
-      confirmed_candidates: unique,
+      attendees: fallback ? [fallback] : [],
+      confirmed_candidates: fallback ? [fallback] : [],
     };
   });
 }
@@ -472,7 +464,7 @@ async function updateLeadStatusForInterview({
   return data || found;
 }
 
-async function updateCandidateInterviewStatus({
+async function updateSharedAttendeeStatus({
   supabase,
   companyId,
   slot,
@@ -484,10 +476,80 @@ async function updateCandidateInterviewStatus({
   body: any;
 }) {
   const status = clean(body.status);
-  const rawInterviewId = clean(body.interviewId || body.interview_id);
-  const isUuid = (value: string) =>
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
-  const interviewId = rawInterviewId && isUuid(rawInterviewId) ? rawInterviewId : "";
+  const attendeeId = clean(
+    body.attendeeId ||
+      body.attendee_id ||
+      body.interviewId ||
+      body.interview_id
+  );
+
+  const allowed = ["approved", "rejected", "no_show", "reschedule"];
+  if (!allowed.includes(status)) {
+    return { error: "Status de candidato inválido.", statusCode: 400 };
+  }
+
+  if (!attendeeId) {
+    return { error: "ID do participante obrigatório.", statusCode: 400 };
+  }
+
+  const attendeeStatus = status === "reschedule" ? "confirmed" : status;
+
+  const { data: attendee, error } = await supabase
+    .from("rh_shared_interview_attendees")
+    .update({
+      status: attendeeStatus,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", attendeeId)
+    .eq("company_id", companyId)
+    .eq("slot_id", slot.id)
+    .select("*")
+    .maybeSingle();
+
+  if (error) {
+    console.error("UPDATE SHARED ATTENDEE STATUS ERROR:", error);
+    return { error: error.message || "Erro ao atualizar participante.", statusCode: 500 };
+  }
+
+  if (!attendee?.id) {
+    return { error: "Participante não encontrado.", statusCode: 404 };
+  }
+
+  const lead = await updateLeadStatusForInterview({
+    supabase,
+    companyId,
+    leadId: attendee.lead_id || null,
+    phone: attendee.phone || null,
+    email: attendee.email || null,
+    status,
+    jobId: slotJobId(slot) || null,
+  });
+
+  return {
+    success: true,
+    attendee,
+    lead,
+  };
+}
+
+async function updateCandidateInterviewStatus({
+  supabase,
+  companyId,
+  slot,
+  body,
+}: {
+  supabase: any;
+  companyId: string;
+  slot: any;
+  body: any;
+}) {
+  const isShared = clean(slot.agenda_type || slot.agendaType) === "shared";
+
+  if (isShared) {
+    return updateSharedAttendeeStatus({ supabase, companyId, slot, body });
+  }
+
+  const status = clean(body.status);
   const leadId = clean(body.leadId || body.lead_id);
   const phone = normalizePhone(body.candidatePhone || body.phone);
   const email = clean(body.candidateEmail || body.email);
@@ -498,115 +560,51 @@ async function updateCandidateInterviewStatus({
     return { error: "Status de candidato inválido.", statusCode: 400 };
   }
 
-  let interview: any = null;
-
-  if (interviewId) {
-    const { data, error } = await supabase
-      .from("rh_interviews")
-      .select("*")
-      .eq("company_id", companyId)
-      .eq("id", interviewId)
-      .maybeSingle();
-
-    if (error) console.error("FIND INTERVIEW BY ID ERROR:", error);
-    interview = data || null;
-  }
-
-  if (!interview && leadId) {
-    let query = supabase
-      .from("rh_interviews")
-      .select("*")
-      .eq("company_id", companyId)
-      .eq("lead_id", leadId)
-      .limit(1);
-
-    if (slotStart(slot)) query = query.eq("start_at", slotStart(slot));
-    if (jobId) query = query.eq("job_id", jobId);
-
-    const { data, error } = await query.maybeSingle();
-
-    if (error) console.error("FIND INTERVIEW BY LEAD ERROR:", error);
-    interview = data || null;
-  }
-
-  if (!interview && (phone || email)) {
-    let query = supabase
-      .from("rh_interviews")
-      .select("*")
-      .eq("company_id", companyId)
-      .eq("start_at", slotStart(slot))
-      .limit(20);
-
-    if (jobId) query = query.eq("job_id", jobId);
-
-    const { data, error } = await query;
-
-    if (error) console.error("FIND INTERVIEW BY PHONE/EMAIL ERROR:", error);
-
-    interview =
-      (data || []).find((item: any) => {
-        const samePhone =
-          phone &&
-          normalizePhone(item.candidate_phone || item.telefone_candidato || item.phone) === phone;
-        const sameEmail =
-          email &&
-          normalizeText(item.candidate_email || item.email_candidato || item.email) === normalizeText(email);
-        return samePhone || sameEmail;
-      }) || null;
-  }
-
-  const interviewStatus = status === "reschedule" ? "scheduled" : status;
-
-  if (interview?.id) {
-    const { error } = await supabase
-      .from("rh_interviews")
-      .update({
-        status: interviewStatus,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", interview.id)
-      .eq("company_id", companyId);
-
-    if (error) {
-      console.error("UPDATE INTERVIEW STATUS ERROR:", error);
-      return { error: error.message || "Erro ao atualizar entrevista.", statusCode: 500 };
-    }
-  }
-
-  const finalLeadId = leadId || interview?.lead_id || null;
-  const finalPhone = phone || normalizePhone(interview?.candidate_phone || interview?.phone) || null;
-  const finalEmail = email || interview?.candidate_email || interview?.email || null;
-
   const lead = await updateLeadStatusForInterview({
     supabase,
     companyId,
-    leadId: finalLeadId,
-    phone: finalPhone,
-    email: finalEmail,
+    leadId: leadId || slot.lead_id || null,
+    phone: phone || slot.reserved_phone || null,
+    email: email || slot.reserved_email || null,
     status,
     jobId,
   });
 
-  if (!interview?.id && !lead?.id) {
-    console.warn("CANDIDATO SEM ENTREVISTA/LEAD VINCULADO, ACAO NAO BLOQUEADA:", {
-      companyId,
-      slotId: slot?.id,
-      phone,
-      email,
-      status,
-    });
+  const slotStatusMap: Record<string, string> = {
+    approved: "approved",
+    rejected: "rejected",
+    no_show: "no_show",
+    reschedule: "available",
+  };
 
-    return {
-      success: true,
-      warning: "Candidato não estava vinculado a uma entrevista/lead. A ação não foi bloqueada.",
-      interview: null,
-      lead: null,
-    };
+  const slotUpdate: any = {
+    status: slotStatusMap[status] || slot.status,
+    updated_at: new Date().toISOString(),
+  };
+
+  if (status === "reschedule") {
+    slotUpdate.reserved_name = null;
+    slotUpdate.reserved_phone = null;
+    slotUpdate.reserved_email = null;
+    slotUpdate.reserved_at = null;
+    slotUpdate.lead_id = null;
+    slotUpdate.reserved_count = 0;
+  }
+
+  const { error: slotError } = await supabase
+    .from("rh_interview_slots")
+    .update(slotUpdate)
+    .eq("id", slot.id)
+    .eq("company_id", companyId);
+
+  if (slotError) {
+    console.error("UPDATE SLOT STATUS FROM CANDIDATE ACTION ERROR:", slotError);
+    return { error: slotError.message || "Erro ao atualizar horário.", statusCode: 500 };
   }
 
   return {
     success: true,
-    interview,
+    interview: null,
     lead,
   };
 }
@@ -781,7 +779,7 @@ export async function PATCH(req: NextRequest) {
     }
 
     if (body.candidateAction === true) {
-      const result = await updateCandidateInterviewStatus({
+      const result: any = await updateCandidateInterviewStatus({
         supabase,
         companyId,
         slot: currentSlot,

@@ -37,10 +37,24 @@ function toDateTimeLocal(value?: string | null) {
   return local.toISOString().slice(0, 16);
 }
 
-function agendaLink(token: string) {
+function agendaLink(slotOrToken: any) {
+  const token =
+    typeof slotOrToken === "string"
+      ? slotOrToken
+      : slotOrToken?.token || "";
+
   if (!token) return "";
-  if (typeof window === "undefined") return `/agenda/${token}`;
-  return `${window.location.origin}/agenda/${token}`;
+
+  const isShared =
+    typeof slotOrToken === "object" &&
+    getSlotAgendaType(slotOrToken) === "shared";
+
+  const path = isShared
+    ? `/agenda-compartilhada/${token}`
+    : `/agenda/${token}`;
+
+  if (typeof window === "undefined") return path;
+  return `${window.location.origin}${path}`;
 }
 
 function statusLabel(status?: string) {
@@ -605,7 +619,7 @@ export default function AvailabilityPage() {
   }
 
   async function copyLink(slot: any) {
-    await navigator.clipboard.writeText(agendaLink(slot.token));
+    await navigator.clipboard.writeText(agendaLink(slot));
     alert("Link copiado.");
   }
 
@@ -1017,7 +1031,7 @@ export default function AvailabilityPage() {
                   </button>
 
                   {slot.token && (
-                    <a style={styles.secondaryButton} href={`/agenda/${slot.token}`} target="_blank" rel="noreferrer">
+                    <a style={styles.secondaryButton} href={agendaLink(slot)} target="_blank" rel="noreferrer">
                       Abrir
                     </a>
                   )}
