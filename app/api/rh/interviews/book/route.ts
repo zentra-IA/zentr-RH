@@ -154,10 +154,14 @@ async function getLeadById(supabase: any, companyId: string, leadId?: string | n
 
   if (!id) return null;
 
+  // IMPORTANTE:
+  // A identificação da agenda individual vem pelo leadId na URL.
+  // Não filtramos por company_id aqui porque em alguns bancos antigos a coluna
+  // pode estar como companyId/id_da_empresa ou o cache da API pode não reconhecer.
+  // O ID do lead já é UUID único e resolve o candidato correto.
   const { data, error } = await supabase
     .from("leads")
     .select("*")
-    .eq("company_id", companyId)
     .eq("id", id)
     .maybeSingle();
 
@@ -166,7 +170,12 @@ async function getLeadById(supabase: any, companyId: string, leadId?: string | n
     return null;
   }
 
-  return data || null;
+  if (!data?.id) {
+    console.error("GET LEAD BY ID NOT FOUND:", { leadId: id, companyId });
+    return null;
+  }
+
+  return data;
 }
 
 async function findLeadByFallbacks({
