@@ -49,9 +49,16 @@ function agendaLink(slotOrToken: any) {
     typeof slotOrToken === "object" &&
     getSlotAgendaType(slotOrToken) === "shared";
 
+  const leadId =
+    typeof slotOrToken === "object"
+      ? slotOrToken?.lead_id || slotOrToken?.leadId || ""
+      : "";
+
   const path = isShared
     ? `/agenda-compartilhada/${token}`
-    : `/agenda/${token}`;
+    : leadId
+      ? `/agenda/${token}?leadId=${encodeURIComponent(String(leadId))}`
+      : `/agenda/${token}`;
 
   if (typeof window === "undefined") return path;
   return `${window.location.origin}${path}`;
@@ -80,8 +87,29 @@ function getSlotAgendaType(slot: any) {
 }
 
 function getSlotAttendees(slot: any) {
-  if (Array.isArray(slot.attendees)) return slot.attendees;
-  if (Array.isArray(slot.confirmed_candidates)) return slot.confirmed_candidates;
+  if (Array.isArray(slot.attendees) && slot.attendees.length) return slot.attendees;
+  if (Array.isArray(slot.confirmed_candidates) && slot.confirmed_candidates.length) {
+    return slot.confirmed_candidates;
+  }
+
+  // Fallback importante:
+  // alguns horários antigos/individuais gravam o candidato direto no slot,
+  // não na tabela de participantes. Mesmo assim a recrutadora precisa aprovar/reprovar.
+  if (slot?.reserved_name || slot?.reserved_phone || slot?.reserved_email || slot?.lead_id) {
+    return [
+      {
+        id: slot.lead_id || null,
+        lead_id: slot.lead_id || null,
+        attendee_id: null,
+        name: slot.reserved_name || "Candidato",
+        phone: slot.reserved_phone || null,
+        email: slot.reserved_email || null,
+        status: slot.status || "reserved",
+        source: "slot_reservation",
+      },
+    ];
+  }
+
   return [];
 }
 
@@ -467,6 +495,7 @@ export default function AvailabilityPage() {
 
     const rawInterviewId = person?.interview_id || person?.interviewId || person?.rh_interview_id || null;
     const rawPersonId = person?.id || null;
+    const attendeeId = person?.attendee_id || person?.attendeeId || (person?.source === "rh_shared_interview_attendees" ? person?.id : null);
 
     // Nunca envie ids artificiais como "slot-..." como se fossem entrevista.
     // Isso era o que fazia a API responder "Entrevista não encontrada".
@@ -504,6 +533,7 @@ export default function AvailabilityPage() {
           clearReservation: getSlotAgendaType(slot) !== "shared",
           leadId,
           interviewId,
+          attendeeId,
           candidatePhone: person?.phone || null,
           candidateEmail: person?.email || null,
         }),
@@ -535,6 +565,7 @@ export default function AvailabilityPage() {
         id: slot.id,
         candidateAction: true,
         interviewId,
+        attendeeId,
         leadId,
         status,
         candidatePhone: person?.phone || null,

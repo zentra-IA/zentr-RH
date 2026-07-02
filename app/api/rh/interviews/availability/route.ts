@@ -99,7 +99,7 @@ async function getJobTitle(supabase: any, companyId: string, jobId: string) {
 async function upsertLeadFromSlot(supabase: any, slot: any, status: string) {
   const leadStatusMap: Record<string, string> = {
     confirmed: "entrevista_confirmada",
-    approved: "aprovado",
+    approved: "contratado",
     rejected: "nao_aprovado",
     no_show: "nao_compareceu",
   };
@@ -488,8 +488,26 @@ async function updateSharedAttendeeStatus({
     return { error: "Status de candidato inválido.", statusCode: 400 };
   }
 
+  // Se for participante novo da tabela compartilhada, usamos o ID do attendee.
+  // Se for um horário antigo/fallback gravado direto no slot, não existe attendee_id.
+  // Nesse caso atualizamos o lead pelo telefone/e-mail/lead_id e não quebramos a operação.
   if (!attendeeId) {
-    return { error: "ID do participante obrigatório.", statusCode: 400 };
+    const lead = await updateLeadStatusForInterview({
+      supabase,
+      companyId,
+      leadId: clean(body.leadId || body.lead_id) || slot.lead_id || null,
+      phone: body.candidatePhone || body.phone || slot.reserved_phone || null,
+      email: body.candidateEmail || body.email || slot.reserved_email || null,
+      status,
+      jobId: slotJobId(slot) || null,
+    });
+
+    return {
+      success: true,
+      attendee: null,
+      lead,
+      fallback: true,
+    };
   }
 
   const attendeeStatus = status === "reschedule" ? "confirmed" : status;

@@ -721,10 +721,20 @@ async function getNextAvailableSlot(
 }
   
 
-function publicAgendaLink(slot: any) {
+function publicAgendaLink(slot: any, leadId?: string | null) {
   const token = slot?.token || slot?.id;
   if (!token) return "";
-  return `${APP_URL}/agenda/${token}`;
+
+  const agendaType = String(slot?.agenda_type || slot?.agendaType || "individual").toLowerCase();
+
+  if (agendaType === "shared") {
+    return `${APP_URL}/agenda-compartilhada/${token}`;
+  }
+
+  const base = `${APP_URL}/agenda/${token}`;
+  if (!leadId) return base;
+
+  return `${base}?leadId=${encodeURIComponent(leadId)}`;
 }
 
 async function buildVariableContext({
@@ -777,7 +787,7 @@ async function buildVariableContext({
     queueContext?.title ||
     "";
 
-  const scheduleLink = publicAgendaLink(slot);
+  const scheduleLink = publicAgendaLink(slot, lead?.id || null);
 
   console.log("VARIAVEIS_TEMPLATE_AGENDAMENTO:", {
     lead_id: lead?.id,
