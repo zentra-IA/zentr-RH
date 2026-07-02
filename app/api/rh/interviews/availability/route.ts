@@ -41,6 +41,39 @@ function addMinutes(date: Date, minutes: number) {
   return new Date(date.getTime() + minutes * 60 * 1000);
 }
 
+// O sistema trabalha com horários de entrevista no fuso do Brasil/São Paulo.
+// Na Vercel o Node geralmente roda em UTC. Se usarmos new Date("YYYY-MM-DDTHH:mm"),
+// 15:00 vira 15:00 UTC e aparece 12:00 no Brasil.
+// Por isso convertemos o horário local de São Paulo para UTC antes de salvar no timestamptz.
+function brazilLocalToUtcDate(date: string, time: string) {
+  const [year, month, day] = clean(date).split("-").map(Number);
+  const [hour, minute] = clean(time || "00:00").split(":").map(Number);
+
+  if (!year || !month || !day || Number.isNaN(hour) || Number.isNaN(minute)) {
+    return new Date("invalid");
+  }
+
+  // São Paulo = UTC-03. 15:00 local precisa ser salvo como 18:00Z.
+  return new Date(Date.UTC(year, month - 1, day, hour + 3, minute || 0, 0, 0));
+}
+
+function parseDateTimeAsBrazilLocal(value: any) {
+  const raw = clean(value);
+  if (!raw) return new Date("invalid");
+
+  // Se já vier ISO com timezone explícito, respeita.
+  if (/Z$|[+-]\d{2}:?\d{2}$/.test(raw)) {
+    return new Date(raw);
+  }
+
+  const match = raw.match(/^(\d{4}-\d{2}-\d{2})[T\s](\d{2}:\d{2})/);
+  if (match) {
+    return brazilLocalToUtcDate(match[1], match[2]);
+  }
+
+  return new Date(raw);
+}
+
 function buildSlotsFromRange({
   date,
   startTime,
@@ -53,8 +86,8 @@ function buildSlotsFromRange({
   duration: number;
 }) {
   const slots: { startAt: Date; endAt: Date }[] = [];
-  const start = new Date(`${date}T${startTime}:00`);
-  const end = new Date(`${date}T${endTime}:00`);
+  const start = brazilLocalToUtcDate(date, startTime);
+  const end = brazilLocalToUtcDate(date, endTime);
 
   if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return slots;
 
@@ -872,8 +905,14 @@ export async function POST(req: NextRequest) {
 
       slots = buildSlotsFromRange({ date, startTime, endTime, duration });
     } else {
-      const startAt = new Date(body.startAt || body.start_at);
       const duration = Math.max(10, Math.min(180, Number(body.duration || 30)));
+      const manualDate = clean(body.date);
+      const manualTime = clean(body.startTime || body.start_time);
+
+      const startAt =
+        manualDate && manualTime
+          ? brazilLocalToUtcDate(manualDate, manualTime)
+          : parseDateTimeAsBrazilLocal(body.startAt || body.start_at);
 
       if (Number.isNaN(startAt.getTime())) {
         return NextResponse.json({ error: "Horário inicial obrigatório." }, { status: 400 });

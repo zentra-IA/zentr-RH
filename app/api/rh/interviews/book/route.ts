@@ -55,7 +55,9 @@ function leadWhatsappRecipient(lead: any, fallback?: any) {
 }
 
 function buildSession(companyId: string) {
-  return `${companyId}_${RH_REMINDER_SESSION}`;
+  // O WhatsApp Server deste projeto trabalha com sessionId numérico (ex: 1).
+  // Usar `${companyId}_1` impede o envio da confirmação em alguns ambientes.
+  return RH_REMINDER_SESSION;
 }
 
 function appBaseUrl() {
@@ -76,6 +78,7 @@ function formatDateTime(value: string) {
   if (Number.isNaN(date.getTime())) return "-";
 
   return date.toLocaleString("pt-BR", {
+    timeZone: "America/Sao_Paulo",
     weekday: "long",
     day: "2-digit",
     month: "2-digit",
@@ -90,6 +93,7 @@ function formatDate(value: string) {
   if (Number.isNaN(date.getTime())) return "-";
 
   return date.toLocaleDateString("pt-BR", {
+    timeZone: "America/Sao_Paulo",
     weekday: "long",
     day: "2-digit",
     month: "2-digit",
@@ -102,6 +106,7 @@ function formatTime(value: string) {
   if (Number.isNaN(date.getTime())) return "-";
 
   return date.toLocaleTimeString("pt-BR", {
+    timeZone: "America/Sao_Paulo",
     hour: "2-digit",
     minute: "2-digit",
   });
@@ -127,6 +132,7 @@ async function safeSendWhatsapp({
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        companyId,
         sessionId: buildSession(companyId),
         number: finalPhone,
         phone: finalPhone,
