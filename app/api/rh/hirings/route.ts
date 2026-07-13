@@ -824,15 +824,54 @@ export async function DELETE(req: NextRequest) {
     const hard = clean(searchParams.get("hard")) === "1";
 
     if (hard) {
-      const { error } = await supabase
+      const { data: existingHiring, error: findError } = await supabase
+        .from("rh_hirings")
+        .select("id, lead_id, job_id, batch_id, candidate_name, candidate_phone, candidate_email")
+        .eq("id", id)
+        .eq("company_id", companyId)
+        .maybeSingle();
+
+      if (findError) {
+        throw new Error(findError.message);
+      }
+
+      if (!existingHiring) {
+        return NextResponse.json(
+          { error: "Contratação não encontrada ou não pertence à empresa atual." },
+          { status: 404 }
+        );
+      }
+
+      const { data: deletedRows, error: deleteError } = await supabase
         .from("rh_hirings")
         .delete()
         .eq("id", id)
-        .eq("company_id", companyId);
+        .eq("company_id", companyId)
+        .select("id");
 
-      if (error) throw new Error(error.message);
+      if (deleteError) {
+        console.error("HARD DELETE HIRING ERROR:", deleteError);
 
-      return NextResponse.json({ success: true, deleted: true });
+        const message =
+          deleteError.code === "23503"
+            ? "Não foi possível excluir porque esta contratação possui registros vinculados. Exclua os documentos/anexos vinculados e tente novamente."
+            : deleteError.message;
+
+        return NextResponse.json({ error: message }, { status: 409 });
+      }
+
+      if (!deletedRows?.length) {
+        return NextResponse.json(
+          { error: "A contratação não foi excluída." },
+          { status: 409 }
+        );
+      }
+
+      return NextResponse.json({
+        success: true,
+        deleted: true,
+        id,
+      });
     }
 
     const { data, error } = await supabase

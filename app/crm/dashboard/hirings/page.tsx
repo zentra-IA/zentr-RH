@@ -396,21 +396,54 @@ export default function HiringsPage() {
   }
 
   async function deleteHiring(item: any) {
-    if (!confirm(`Excluir contratação de ${getCandidateName(item)}?`)) return;
+    const candidateName = getCandidateName(item);
 
-    const res = await fetch(`/api/rh/hirings?id=${item.id}`, {
-      method: "DELETE",
-      credentials: "include",
-    });
+    const confirmed = confirm(
+      `Excluir definitivamente a contratação de ${candidateName}?\n\nEssa ação remove o registro da área de Contratações e não pode ser desfeita.`
+    );
 
-    const data = await res.json().catch(() => ({}));
+    if (!confirmed) return;
 
-    if (!res.ok) {
-      alert(data.error || "Erro ao excluir contratação.");
-      return;
+    try {
+      setSaving(true);
+
+      const res = await fetch(
+        `/api/rh/hirings?id=${encodeURIComponent(item.id)}&hard=1`,
+        {
+          method: "DELETE",
+          credentials: "include",
+          cache: "no-store",
+        }
+      );
+
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        alert(data.error || "Erro ao excluir contratação.");
+        return;
+      }
+
+      setItems((current) =>
+        current.filter((hiring) => hiring.id !== item.id)
+      );
+
+      setDocumentsByHiring((current) => {
+        const next = { ...current };
+        delete next[item.id];
+        return next;
+      });
+
+      if (activeHiring?.id === item.id) {
+        setActiveHiring(null);
+      }
+
+      await loadHirings();
+    } catch (error) {
+      console.error("DELETE HIRING FRONTEND ERROR:", error);
+      alert("Não foi possível excluir a contratação.");
+    } finally {
+      setSaving(false);
     }
-
-    await loadHirings();
   }
 
   return (

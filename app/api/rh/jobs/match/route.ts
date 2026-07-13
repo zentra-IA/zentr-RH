@@ -4,7 +4,19 @@ import { requireCompany } from "@/lib/server-company";
 
 export const dynamic = "force-dynamic";
 
-const prisma = new PrismaClient();
+const globalForPrisma = globalThis as unknown as {
+  prisma?: PrismaClient;
+};
+
+const prisma =
+  globalForPrisma.prisma ||
+  new PrismaClient({
+    log: ["error"],
+  });
+
+if (process.env.NODE_ENV !== "production") {
+  globalForPrisma.prisma = prisma;
+}
 
 const BLOCKED_MATCH_STATUSES = ["selected", "contacted", "interview", "hired"];
 
@@ -832,6 +844,16 @@ export async function PATCH(req: NextRequest) {
     });
 
     const validIds = candidates.map((candidate) => candidate.id);
+
+    if (validIds.length !== candidateIds.length) {
+      return NextResponse.json(
+        {
+          error:
+            "Um ou mais candidatos não existem, estão inativos ou não pertencem à empresa atual.",
+        },
+        { status: 403 }
+      );
+    }
 
     for (const candidateId of validIds) {
       const existing = await prisma.jobMatch.findUnique({

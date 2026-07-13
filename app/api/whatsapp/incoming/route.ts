@@ -963,20 +963,23 @@ async function findRhTriggeredTemplate({
   return null;
 }
 
-async function getIntentTemplate({
+async function getDefaultRhTemplate({
   supabase,
-  intent,
   lead,
   companyId,
   message,
 }: {
   supabase: any;
-  intent: string;
   lead: any;
   companyId: string;
   message: string;
 }) {
-  const intents = intentAliases(intent);
+  /*
+    REGRA:
+    - Só utiliza uma mensagem explicitamente cadastrada como padrão.
+    - Não escolhe uma resposta baseada em intenção inferida.
+    - Não escolhe template aleatório.
+  */
   const extra = await buildVariableContext({
     supabase,
     companyId,
@@ -985,33 +988,61 @@ async function getIntentTemplate({
     lastMessage: message,
   });
 
-  const { data, error } = await supabase
+  const { data: templates, error } = await supabase
     .from("message_templates")
     .select("*")
     .eq("company_id", companyId)
     .eq("active", true)
-    .in("intent", intents)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+    .order("created_at", { ascending: false });
 
   if (error) {
-    console.error("ERRO INTENT TEMPLATE:", error);
+    console.error("ERRO AO BUSCAR MENSAGEM PADRÃO:", error);
     return null;
   }
 
-  const rawMessage = data?.base_message || data?.message || data?.content || data?.response || data?.final_message || data?.caption || "";
-  if (!rawMessage && !data?.media_url) return null;
+  const defaultTemplate = (templates || []).find((template: any) => {
+    const intent = String(template?.intent || "").trim().toUpperCase();
+    const type = String(
+      template?.type ||
+      template?.template_type ||
+      template?.category ||
+      ""
+    )
+      .trim()
+      .toUpperCase();
+
+    return (
+      template?.is_default === true ||
+      template?.default === true ||
+      template?.is_fallback === true ||
+      template?.fallback === true ||
+      ["DEFAULT", "PADRAO", "PADRÃO", "FALLBACK"].includes(intent) ||
+      ["DEFAULT", "PADRAO", "PADRÃO", "FALLBACK"].includes(type)
+    );
+  });
+
+  if (!defaultTemplate) return null;
+
+  const rawMessage =
+    defaultTemplate.base_message ||
+    defaultTemplate.message ||
+    defaultTemplate.content ||
+    defaultTemplate.response ||
+    defaultTemplate.final_message ||
+    defaultTemplate.caption ||
+    "";
+
+  if (!rawMessage && !defaultTemplate.media_url) return null;
 
   return {
     reply: rawMessage ? applyVariables(rawMessage, lead, extra) : null,
-    mediaUrl: data.media_url || null,
-    mediaType: data.media_type || "text",
-    kanbanStatus: getTemplateKanbanStatus(data),
-    notifyEnabled: Boolean(data.notify_enabled),
-    notifyNumber: data.notify_number || null,
-    notifyMessage: data.notify_message || null,
-    source: "intent_template",
+    mediaUrl: defaultTemplate.media_url || null,
+    mediaType: defaultTemplate.media_type || "text",
+    kanbanStatus: getTemplateKanbanStatus(defaultTemplate),
+    notifyEnabled: Boolean(defaultTemplate.notify_enabled),
+    notifyNumber: defaultTemplate.notify_number || null,
+    notifyMessage: defaultTemplate.notify_message || null,
+    source: "default_template",
   };
 }
 
@@ -1028,20 +1059,39 @@ async function getFinalRhReply({
   lead: any;
   companyId: string;
 }) {
-  const triggered = await findRhTriggeredTemplate({ supabase, message, lead, companyId });
+  /*
+    ORDEM SEGURA:
+    1. Template com palavras-chave cadastradas.
+    2. Mensagem padrão explicitamente cadastrada.
+    3. Sem resposta automática.
+  */
+  const triggered = await findRhTriggeredTemplate({
+    supabase,
+    message,
+    lead,
+    companyId,
+  });
+
   if (triggered?.reply || triggered?.mediaUrl) {
-    if (!triggered.kanbanStatus && shouldForceInterviewStatus(message, intent, triggered.reply)) {
+    if (
+      !triggered.kanbanStatus &&
+      shouldForceInterviewStatus(message, intent, triggered.reply)
+    ) {
       triggered.kanbanStatus = "quer_agendar_entrevista";
     }
+
     return triggered;
   }
 
-  const intentTemplate = await getIntentTemplate({ supabase, intent, message, lead, companyId });
-  if (intentTemplate?.reply || intentTemplate?.mediaUrl) {
-    if (!intentTemplate.kanbanStatus && shouldForceInterviewStatus(message, intent, intentTemplate.reply)) {
-      intentTemplate.kanbanStatus = "quer_agendar_entrevista";
-    }
-    return intentTemplate;
+  const defaultTemplate = await getDefaultRhTemplate({
+    supabase,
+    lead,
+    companyId,
+    message,
+  });
+
+  if (defaultTemplate?.reply || defaultTemplate?.mediaUrl) {
+    return defaultTemplate;
   }
 
   return {

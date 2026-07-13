@@ -64,6 +64,17 @@ function buildJobPayload(body: any, companyId: string, branchId?: string | null)
   const openings = cleanInt(body.openings) || 1;
   const minExperienceMonths = cleanInt(body.minExperienceMonths);
 
+  const clientId = cleanText(body.clientId);
+  const clientName = cleanText(body.clientName) || cleanText(body.department);
+  const responsibleUserId = cleanText(body.responsibleUserId);
+  const responsibleName = cleanText(body.responsibleName);
+  const priority = cleanText(body.priority) || "normal";
+  const startDate = cleanText(body.startDate);
+  const dueDate = cleanText(body.dueDate);
+  const meetLink = cleanText(body.meetLink);
+  const processDate = cleanText(body.processDate);
+  const processTime = cleanText(body.processTime);
+
   const contractType = cleanText(body.contractType) || "clt";
 
   const educationRequired = cleanText(body.educationRequired);
@@ -77,6 +88,17 @@ function buildJobPayload(body: any, companyId: string, branchId?: string | null)
     text: cleanText(body.requirementsText),
     openings,
     shift: cleanText(body.shift),
+
+    clientId,
+    clientName,
+    responsibleUserId,
+    responsibleName,
+    priority,
+    startDate,
+    dueDate,
+    meetLink,
+    processDate,
+    processTime,
 
     educationRequired,
     educationCurrent,
@@ -122,6 +144,17 @@ function buildJobPayload(body: any, companyId: string, branchId?: string | null)
     languagesRequired,
     shift: cleanText(body.shift),
     openings,
+
+    clientId,
+    clientName,
+    responsibleUserId,
+    responsibleName,
+    priority,
+    startDate,
+    dueDate,
+    meetLink,
+    processDate,
+    processTime,
   };
 
   return {
@@ -129,7 +162,7 @@ function buildJobPayload(body: any, companyId: string, branchId?: string | null)
     branch_id: branchId || null,
 
     title: cleanText(body.title) || "",
-    department: cleanText(body.department),
+    department: clientName,
     description: cleanText(body.description),
 
     city: cleanText(body.city),
@@ -175,6 +208,16 @@ function buildJobPayload(body: any, companyId: string, branchId?: string | null)
       skillsRequired,
       languagesRequired,
       shift: cleanText(body.shift),
+      clientId,
+      clientName,
+      responsibleUserId,
+      responsibleName,
+      priority,
+      startDate,
+      dueDate,
+      meetLink,
+      processDate,
+      processTime,
       updatedAt: new Date().toISOString(),
       matcherVersion: "zentra-rh-job-criteria-v2",
     },
@@ -226,6 +269,74 @@ export async function POST(req: NextRequest) {
     const { companyId, branchId } = await requireCompany(req);
     const body = await req.json();
 
+    const duplicateFromId = cleanText(body.duplicateFromId);
+
+    if (duplicateFromId) {
+      const sourceJob = await prisma.job.findFirst({
+        where: {
+          id: duplicateFromId,
+          company_id: companyId,
+        },
+      });
+
+      if (!sourceJob) {
+        return NextResponse.json(
+          { error: "Vaga original não encontrada." },
+          { status: 404 }
+        );
+      }
+
+      const sourceRequirements =
+        sourceJob.requirements && typeof sourceJob.requirements === "object"
+          ? sourceJob.requirements
+          : {};
+
+      const sourceFilters =
+        sourceJob.filters && typeof sourceJob.filters === "object"
+          ? sourceJob.filters
+          : {};
+
+      const sourceAiCriteria =
+        sourceJob.aiCriteria && typeof sourceJob.aiCriteria === "object"
+          ? sourceJob.aiCriteria
+          : {};
+
+      const duplicatedPayload = buildJobPayload(
+        {
+          ...sourceJob,
+          ...(sourceRequirements as any),
+          ...(sourceFilters as any),
+          ...(sourceAiCriteria as any),
+          title: `${sourceJob.title} - Cópia`,
+          status: "draft",
+          requirementsText:
+            (sourceRequirements as any).text ||
+            (sourceAiCriteria as any).raw ||
+            "",
+          startDate: "",
+          dueDate: "",
+          meetLink: "",
+          processDate: "",
+          processTime: "",
+        },
+        companyId,
+        branchId || sourceJob.branch_id
+      );
+
+      const duplicatedJob = await prisma.job.create({
+        data: duplicatedPayload,
+      });
+
+      return NextResponse.json(
+        {
+          success: true,
+          duplicated: true,
+          job: duplicatedJob,
+        },
+        { status: 201 }
+      );
+    }
+
     const title = cleanText(body.title);
 
     if (!title) {
@@ -241,10 +352,13 @@ export async function POST(req: NextRequest) {
       data: payload,
     });
 
-    return NextResponse.json({
-      success: true,
-      job,
-    });
+    return NextResponse.json(
+      {
+        success: true,
+        job,
+      },
+      { status: 201 }
+    );
   } catch (error: any) {
     console.error("POST /api/rh/jobs:", error);
 
@@ -312,10 +426,34 @@ export async function PATCH(req: NextRequest) {
       branchId || existingJob.branch_id
     );
 
-    const job = await prisma.job.update({
-      where: { id },
+    const updated = await prisma.job.updateMany({
+      where: {
+        id,
+        company_id: companyId,
+      },
       data: payload,
     });
+
+    if (updated.count !== 1) {
+      return NextResponse.json(
+        { error: "Vaga não encontrada ou não pertence à empresa atual." },
+        { status: 404 }
+      );
+    }
+
+    const job = await prisma.job.findFirst({
+      where: {
+        id,
+        company_id: companyId,
+      },
+    });
+
+    if (!job) {
+      return NextResponse.json(
+        { error: "Vaga não encontrada após atualização." },
+        { status: 404 }
+      );
+    }
 
     return NextResponse.json({
       success: true,
@@ -356,9 +494,19 @@ export async function DELETE(req: NextRequest) {
       );
     }
 
-    await prisma.job.delete({
-      where: { id },
+    const deleted = await prisma.job.deleteMany({
+      where: {
+        id,
+        company_id: companyId,
+      },
     });
+
+    if (deleted.count !== 1) {
+      return NextResponse.json(
+        { error: "Vaga não encontrada ou não pertence à empresa atual." },
+        { status: 404 }
+      );
+    }
 
     return NextResponse.json({
       success: true,

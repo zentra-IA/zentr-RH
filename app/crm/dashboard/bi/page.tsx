@@ -17,12 +17,14 @@ function percent(value: any) {
 
 function statusName(status: string) {
   const map: Record<string, string> = {
-    novo: "Novo",
-    enviado: "Enviado",
-    respondeu: "Respondeu",
-    quer_agendar_entrevista: "Quer agendar",
-    entrevista_agendada: "Entrevista agendada",
+    open: "Aberta",
+    draft: "Rascunho",
+    paused: "Pausada",
+    closed: "Fechada",
+    archived: "Arquivada",
+    scheduled: "Agendada",
     confirmed: "Confirmada",
+    done: "Realizada",
     approved: "Aprovado",
     rejected: "Reprovado",
     no_show: "Não compareceu",
@@ -30,8 +32,14 @@ function statusName(status: string) {
     documents_review: "Docs em análise",
     documents_approved: "Docs aprovados",
     hired: "Contrato ativo",
+    canceled: "Cancelado",
     finished: "Finalizado",
     terminated: "Rescindido",
+    todo: "A fazer",
+    doing: "Em andamento",
+    waiting: "Aguardando",
+    completed: "Concluída",
+    waiting_client: "Aguardando cliente",
   };
 
   return map[status] || status || "-";
@@ -79,7 +87,7 @@ export default function BiPage() {
           <p style={styles.kicker}>Zentra RH</p>
           <h1 style={styles.title}>BI Inteligente de RH</h1>
           <p style={styles.subtitle}>
-            Visão executiva de candidatos, vagas, entrevistas, WhatsApp, admissões, documentos e contratos.
+            Acompanhe vagas, entrevistas, apresentação ao cliente, contratações, tarefas e gargalos da operação.
           </p>
         </div>
 
@@ -106,14 +114,14 @@ export default function BiPage() {
             <Metric icon="💼" label="Vagas abertas" value={data.metrics?.openJobs || 0} />
             <Metric icon="📅" label="Entrevistas" value={data.metrics?.interviews || 0} />
             <Metric icon="✅" label="Confirmadas" value={data.metrics?.confirmedInterviews || 0} />
-            <Metric icon="🎯" label="Aprovados" value={data.metrics?.approved || 0} />
-            <Metric icon="❌" label="Reprovados" value={data.metrics?.rejected || 0} />
-            <Metric icon="🚫" label="Não compareceu" value={data.metrics?.noShow || 0} />
-            <Metric icon="📑" label="Admissões" value={data.metrics?.hirings || 0} />
+            <Metric icon="🎯" label="Aprovados RH" value={data.metrics?.approved || 0} />
+            <Metric icon="📤" label="Enviados cliente" value={data.metrics?.sentToClient || 0} />
+            <Metric icon="🏁" label="Aprovados cliente" value={data.metrics?.approvedByClient || 0} />
+            <Metric icon="📑" label="Contratações" value={data.metrics?.hirings || 0} />
+            <Metric icon="📋" label="Tarefas pendentes" value={data.metrics?.pendingTasks || 0} />
+            <Metric icon="🔴" label="Tarefas atrasadas" value={data.metrics?.overdueTasks || 0} />
             <Metric icon="⏳" label="Docs pendentes" value={data.metrics?.pendingDocs || 0} />
-            <Metric icon="⚠️" label="Docs atrasados" value={data.metrics?.lateDocs || 0} />
-            <Metric icon="📋" label="Contratos ativos" value={data.metrics?.activeContracts || 0} />
-            <Metric icon="⏰" label="Contratos vencendo" value={data.metrics?.endingContracts || 0} />
+            <Metric icon="📈" label="Conversão geral" value={percent(data.metrics?.conversionRate || 0)} />
           </section>
 
           <section style={styles.gridTwo}>
@@ -121,7 +129,7 @@ export default function BiPage() {
               <div style={styles.cardHeader}>
                 <div>
                   <h2 style={styles.sectionTitle}>Funil RH</h2>
-                  <p style={styles.smallText}>Da captação até admissão.</p>
+                  <p style={styles.smallText}>Da captação até contratação.</p>
                 </div>
                 <span style={styles.badge}>Conversão: {percent(data.metrics?.conversionRate || 0)}</span>
               </div>
@@ -134,7 +142,12 @@ export default function BiPage() {
                       <span>{item.value}</span>
                     </div>
                     <div style={styles.bar}>
-                      <div style={{ ...styles.barFill, width: `${Math.max(4, (Number(item.value || 0) / maxFunnel) * 100)}%` }} />
+                      <div
+                        style={{
+                          ...styles.barFill,
+                          width: `${Math.max(4, (Number(item.value || 0) / maxFunnel) * 100)}%`,
+                        }}
+                      />
                     </div>
                   </div>
                 ))}
@@ -144,18 +157,16 @@ export default function BiPage() {
             <div style={styles.card}>
               <div style={styles.cardHeader}>
                 <div>
-                  <h2 style={styles.sectionTitle}>WhatsApp e Campanhas</h2>
-                  <p style={styles.smallText}>Volume e resposta do CRM.</p>
+                  <h2 style={styles.sectionTitle}>Eficiência operacional</h2>
+                  <p style={styles.smallText}>Indicadores de qualidade do processo.</p>
                 </div>
               </div>
 
               <div style={styles.miniGrid}>
-                <Metric compact icon="📤" label="Enviadas" value={data.whatsapp?.sent || 0} />
-                <Metric compact icon="📥" label="Recebidas" value={data.whatsapp?.received || 0} />
-                <Metric compact icon="💬" label="Taxa resposta" value={percent(data.whatsapp?.responseRate || 0)} />
-                <Metric compact icon="🚀" label="Fila pendente" value={data.whatsapp?.queuePending || 0} />
-                <Metric compact icon="⏸️" label="IA pausada" value={data.whatsapp?.paused || 0} />
-                <Metric compact icon="📭" label="Sem resposta" value={data.whatsapp?.noResponse || 0} />
+                <Metric compact icon="📈" label="Comparecimento" value={percent(data.efficiency?.attendanceRate || 0)} />
+                <Metric compact icon="🎯" label="Aprovação RH" value={percent(data.efficiency?.approvalRate || 0)} />
+                <Metric compact icon="📑" label="Admissão" value={percent(data.efficiency?.hiringRate || 0)} />
+                <Metric compact icon="⏱️" label="Tempo médio" value={`${data.efficiency?.avgDaysToHire || 0} dias`} />
               </div>
             </div>
           </section>
@@ -167,39 +178,45 @@ export default function BiPage() {
               rows={(data.topJobs || []).map((item: any) => ({
                 left: item.title || "Vaga",
                 right: `${item.total || 0}`,
-                meta: `${item.approved || 0} aprovados • ${item.hired || 0} admitidos`,
+                meta: `${item.approved || 0} aprovados RH • ${item.hired || 0} contratações`,
               }))}
             />
 
             <ListCard
-              title="Documentos"
-              subtitle="Situação da documentação admissional."
-              rows={(data.documents || []).map((item: any) => ({
-                left: statusName(item.status),
-                right: `${item.total || 0}`,
-                meta: item.status === "expired" ? "Atrasados" : "Checklist admissional",
-              }))}
+              title="Apresentação ao cliente"
+              subtitle="Candidatos enviados para decisão da empresa."
+              rows={[
+                { left: "Apresentações geradas", right: data.presentations?.total || 0, meta: "Links criados para clientes" },
+                { left: "Candidatos enviados", right: data.presentations?.candidates || 0, meta: "Aguardando decisão ou avaliados" },
+                { left: "Aprovados pelo cliente", right: data.presentations?.approved || 0, meta: "Devem seguir para contratação" },
+                { left: "Reprovados pelo cliente", right: data.presentations?.rejected || 0, meta: "Não seguem no processo" },
+              ]}
             />
 
             <ListCard
-              title="Contratos"
-              subtitle="Gestão de vínculo e vencimentos."
-              rows={(data.contracts || []).map((item: any) => ({
-                left: statusName(item.status),
-                right: `${item.total || 0}`,
-                meta: item.status === "hired" ? "Ativos" : "Status contratual",
-              }))}
+              title="Tarefas"
+              subtitle="Pendências internas da equipe."
+              rows={[
+                { left: "Total de tarefas", right: data.tasks?.total || 0, meta: "Criadas no sistema" },
+                { left: "Pendentes", right: data.tasks?.pending || 0, meta: "Ainda precisam de ação" },
+                { left: "Urgentes", right: data.tasks?.urgent || 0, meta: "Prioridade máxima" },
+                { left: "Atrasadas", right: data.tasks?.overdue || 0, meta: "Prazo vencido" },
+              ]}
             />
           </section>
 
           <section style={styles.gridTwo}>
             <div style={styles.card}>
-              <h2 style={styles.sectionTitle}>Indicadores de eficiência</h2>
+              <h2 style={styles.sectionTitle}>WhatsApp e Campanhas</h2>
+              <p style={styles.smallText}>Volume e resposta do CRM.</p>
+
               <div style={styles.miniGrid}>
-                <Metric compact icon="📈" label="Comparecimento" value={percent(data.efficiency?.attendanceRate || 0)} />
-                <Metric compact icon="🎯" label="Aprovação" value={percent(data.efficiency?.approvalRate || 0)} />
-                <Metric compact icon="📑" label="Admissão" value={percent(data.efficiency?.hiringRate || 0)} />
-                <Metric compact icon="⏱️" label="Tempo médio" value={`${data.efficiency?.avgDaysToHire || 0} dias`} />
+                <Metric compact icon="📤" label="Enviadas" value={data.whatsapp?.sent || 0} />
+                <Metric compact icon="📥" label="Recebidas" value={data.whatsapp?.received || 0} />
+                <Metric compact icon="💬" label="Taxa resposta" value={percent(data.whatsapp?.responseRate || 0)} />
+                <Metric compact icon="🚀" label="Fila pendente" value={data.whatsapp?.queuePending || 0} />
+                <Metric compact icon="⏸️" label="IA pausada" value={data.whatsapp?.paused || 0} />
+                <Metric compact icon="📭" label="Sem resposta" value={data.whatsapp?.noResponse || 0} />
               </div>
             </div>
 
@@ -222,6 +239,28 @@ export default function BiPage() {
                 ))}
               </div>
             </div>
+          </section>
+
+          <section style={styles.gridTwo}>
+            <ListCard
+              title="Documentos"
+              subtitle="Situação da documentação admissional."
+              rows={(data.documents || []).map((item: any) => ({
+                left: statusName(item.status),
+                right: `${item.total || 0}`,
+                meta: "Checklist admissional",
+              }))}
+            />
+
+            <ListCard
+              title="Contratos"
+              subtitle="Gestão de vínculo e status contratual."
+              rows={(data.contracts || []).map((item: any) => ({
+                left: statusName(item.status),
+                right: `${item.total || 0}`,
+                meta: item.status === "hired" ? "Ativos" : "Status contratual",
+              }))}
+            />
           </section>
         </>
       )}
@@ -360,63 +399,67 @@ const styles: Record<string, React.CSSProperties> = {
     placeItems: "center",
     background: "#dbeafe",
     fontSize: 20,
+    flexShrink: 0,
   },
   metricLabel: {
     display: "block",
     color: "#64748b",
     fontSize: 12,
-    fontWeight: 800,
+    fontWeight: 850,
   },
   metricValue: {
     display: "block",
-    fontSize: 22,
+    marginTop: 4,
+    fontSize: 24,
     fontWeight: 950,
-    marginTop: 2,
+    color: "#0f172a",
   },
   gridTwo: {
-    marginTop: 18,
+    marginTop: 16,
     display: "grid",
     gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
-    gap: 18,
+    gap: 16,
   },
   gridThree: {
-    marginTop: 18,
+    marginTop: 16,
     display: "grid",
     gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
-    gap: 18,
+    gap: 16,
   },
   card: {
     background: "#fff",
     border: "1px solid #bfdbfe",
     borderRadius: 28,
-    padding: 22,
-    boxShadow: "0 18px 50px rgba(37,99,235,.06)",
+    padding: 20,
+    boxShadow: "0 18px 50px rgba(37,99,235,.08)",
   },
   cardHeader: {
     display: "flex",
     justifyContent: "space-between",
     gap: 12,
-    alignItems: "start",
+    alignItems: "flex-start",
     flexWrap: "wrap",
   },
   sectionTitle: {
     margin: 0,
-    fontSize: 22,
+    fontSize: 20,
     fontWeight: 950,
+    color: "#0f172a",
   },
   smallText: {
-    margin: "4px 0 0",
+    margin: "6px 0 0",
     color: "#64748b",
-    fontSize: 12,
+    fontSize: 13,
+    lineHeight: 1.5,
   },
   badge: {
     border: "1px solid #bfdbfe",
     background: "#eff6ff",
     color: "#1d4ed8",
     borderRadius: 999,
-    padding: "7px 11px",
-    fontSize: 12,
+    padding: "8px 12px",
     fontWeight: 950,
+    fontSize: 12,
   },
   funnel: {
     marginTop: 16,
@@ -425,18 +468,18 @@ const styles: Record<string, React.CSSProperties> = {
   },
   funnelRow: {
     display: "grid",
-    gap: 7,
+    gap: 8,
   },
   funnelTop: {
     display: "flex",
     justifyContent: "space-between",
-    gap: 8,
-    fontSize: 14,
+    gap: 10,
+    fontSize: 13,
   },
   bar: {
     height: 12,
     borderRadius: 999,
-    background: "#dbeafe",
+    background: "#e2e8f0",
     overflow: "hidden",
   },
   barFill: {
@@ -459,10 +502,10 @@ const styles: Record<string, React.CSSProperties> = {
     border: "1px solid #dbeafe",
     background: "#f8fafc",
     borderRadius: 18,
-    padding: 13,
+    padding: 14,
     display: "flex",
     justifyContent: "space-between",
-    gap: 12,
+    gap: 14,
     alignItems: "center",
   },
   alertList: {
@@ -471,30 +514,29 @@ const styles: Record<string, React.CSSProperties> = {
     gap: 10,
   },
   alertItem: {
-    border: "1px solid #fed7aa",
-    background: "#fff7ed",
-    borderRadius: 18,
-    padding: 13,
     display: "flex",
-    gap: 10,
-    alignItems: "start",
-    color: "#9a3412",
+    gap: 12,
+    alignItems: "flex-start",
+    background: "#fff7ed",
+    border: "1px solid #fed7aa",
+    borderRadius: 18,
+    padding: 14,
   },
   empty: {
-    marginTop: 18,
-    border: "1px dashed #93c5fd",
+    marginTop: 16,
+    background: "#fff",
+    border: "1px solid #bfdbfe",
     borderRadius: 22,
     padding: 24,
     color: "#64748b",
-    textAlign: "center",
-    background: "#fff",
+    fontWeight: 850,
   },
   emptySmall: {
+    background: "#f8fafc",
     border: "1px dashed #bfdbfe",
     borderRadius: 18,
-    padding: 16,
+    padding: 14,
     color: "#64748b",
-    textAlign: "center",
-    background: "#f8fafc",
+    fontWeight: 800,
   },
 };

@@ -581,6 +581,21 @@ rejected: `Marcar ${person?.name || "este candidato"} como não aprovado?`,
       return;
     }
 
+    if (status === "approved") {
+      const link = data?.clientPresentation?.clientLink;
+      if (link) {
+        const shouldCopy = confirm(
+          `Candidato enviado para Apresentação ao Cliente.\n\nLink da vaga:\n${link}\n\nDeseja copiar o link agora?`
+        );
+
+        if (shouldCopy) {
+          await navigator.clipboard.writeText(link).catch(() => null);
+        }
+      } else {
+        alert("Candidato enviado para Apresentação ao Cliente.");
+      }
+    }
+
     await loadSlots();
   }
 

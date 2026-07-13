@@ -29,6 +29,15 @@ type Job = {
 type JobForm = {
   title: string;
   department: string;
+  clientId: string;
+  responsibleUserId: string;
+  responsibleName: string;
+  priority: string;
+  startDate: string;
+  dueDate: string;
+  meetLink: string;
+  processDate: string;
+  processTime: string;
   city: string;
   state: string;
   neighborhood: string;
@@ -56,9 +65,87 @@ type JobForm = {
   ageMax: string;
 };
 
+type TeamUser = {
+  id?: string;
+  user_id?: string;
+  name?: string;
+  email?: string;
+  role?: string;
+  active?: boolean;
+};
+
+
+type RhClient = {
+  id: string;
+  name?: string;
+  companyName?: string;
+  cnpj?: string | null;
+  responsibleName?: string | null;
+  whatsapp?: string | null;
+  email?: string | null;
+  city?: string | null;
+  state?: string | null;
+};
+
+type KanbanFilters = {
+  search: string;
+  client: string;
+  responsibleUserId: string;
+  priority: string;
+  status: string;
+  contractType: string;
+  city: string;
+};
+
+const emptyFilters: KanbanFilters = {
+  search: "",
+  client: "",
+  responsibleUserId: "",
+  priority: "",
+  status: "",
+  contractType: "",
+  city: "",
+};
+
+const priorityLabel: Record<string, string> = {
+  urgent: "Urgente",
+  high: "Alta",
+  normal: "Normal",
+  low: "Baixa",
+};
+
+const priorityRank: Record<string, number> = {
+  urgent: 0,
+  high: 1,
+  normal: 2,
+  low: 3,
+};
+
+const statusChecklist: Record<string, string[]> = {
+  open: ["Vaga publicada/divulgada", "Mensagem inicial configurada", "Critérios conferidos"],
+  analyzing_resumes: ["Currículos recebidos", "IA aplicada", "Candidatos separados em lote"],
+  scheduling_interviews: ["Lote fechado", "Mensagem enviada", "Link de agenda enviado"],
+  clt_jobs: ["Dados CLT conferidos", "Salário/benefícios validados", "Documentos previstos"],
+  internship_jobs: ["Curso/período conferidos", "Idade mínima validada", "Horário validado"],
+  paused: ["Motivo da pausa registrado", "Cliente avisado", "Prazo de retomada definido"],
+  no_client_response: ["Candidatos enviados", "Follow-up feito", "Próximo contato definido"],
+  closed: ["Retorno final registrado", "Contratação validada", "Vaga encerrada"],
+  canceled: ["Motivo cancelamento registrado", "Histórico preservado", "Equipe avisada"],
+  draft: ["Informações básicas preenchidas", "Critérios revisados", "Pronta para publicar"],
+};
+
 const emptyForm: JobForm = {
   title: "",
   department: "",
+  clientId: "",
+  responsibleUserId: "",
+  responsibleName: "",
+  priority: "normal",
+  startDate: "",
+  dueDate: "",
+  meetLink: "",
+  processDate: "",
+  processTime: "",
   city: "",
   state: "",
   neighborhood: "",
@@ -88,11 +175,30 @@ const emptyForm: JobForm = {
 
 const statusLabel: Record<string, string> = {
   draft: "Rascunho",
-  open: "Aberta",
-  paused: "Pausada",
-  closed: "Fechada",
+  open: "Divulgação da vaga",
+  analyzing_resumes: "Analisando currículos",
+  scheduling_interviews: "Agendando entrevistas",
+  clt_jobs: "Vagas CLT",
+  internship_jobs: "Vagas de estágio",
+  paused: "Pausadas",
+  no_client_response: "Sem retorno do cliente",
+  closed: "Concluída",
+  canceled: "Cancelada",
   archived: "Arquivada",
 };
+
+const kanbanColumns = [
+  { key: "open", label: "Divulgação da vaga", helper: "Vagas ativas para divulgação." },
+  { key: "analyzing_resumes", label: "Analisando currículos", helper: "Triagem e seleção inicial." },
+  { key: "scheduling_interviews", label: "Agendando entrevistas", helper: "Contato e marcação com candidatos." },
+  { key: "clt_jobs", label: "Vagas CLT", helper: "Processos CLT em andamento." },
+  { key: "internship_jobs", label: "Vagas de estágio", helper: "Processos de estágio." },
+  { key: "paused", label: "Pausadas", helper: "Aguardando retomada interna." },
+  { key: "no_client_response", label: "Sem retorno do cliente", helper: "Cliente ainda não respondeu." },
+  { key: "closed", label: "Concluída", helper: "Vagas finalizadas com sucesso." },
+  { key: "canceled", label: "Cancelada", helper: "Processos cancelados." },
+  { key: "draft", label: "Rascunho", helper: "Vagas ainda não publicadas." },
+];
 
 const regionLabel: Record<string, string> = {
   nenhuma: "Nenhuma",
@@ -116,6 +222,62 @@ function getJson(job: Job, key: string) {
   return job.filters?.[key] ?? job.requirements?.[key] ?? job.aiCriteria?.[key] ?? null;
 }
 
+function getMeta(job: Job, key: string) {
+  return getJson(job, key) ?? (job as any)[key] ?? null;
+}
+
+function getClientName(job: Job) {
+  return String(getMeta(job, "clientName") || job.department || "").trim();
+}
+
+function getClientId(job: Job) {
+  return String(getMeta(job, "clientId") || "").trim();
+}
+
+function getPriority(job: Job) {
+  return String(getMeta(job, "priority") || "normal");
+}
+
+function getResponsibleUserId(job: Job) {
+  return String(getMeta(job, "responsibleUserId") || "");
+}
+
+function getResponsibleName(job: Job) {
+  return String(getMeta(job, "responsibleName") || "");
+}
+
+function priorityPillStyle(priority: string): React.CSSProperties {
+  if (priority === "urgent") {
+    return {
+      border: "1px solid #fecaca",
+      background: "#fef2f2",
+      color: "#dc2626",
+    };
+  }
+
+  if (priority === "high") {
+    return {
+      border: "1px solid #fde68a",
+      background: "#fffbeb",
+      color: "#ca8a04",
+    };
+  }
+
+  if (priority === "normal") {
+    return {
+      border: "1px solid #bfdbfe",
+      background: "#eff6ff",
+      color: "#2563eb",
+    };
+  }
+
+  return {
+    border: "1px solid #e2e8f0",
+    background: "#f8fafc",
+    color: "#64748b",
+  };
+}
+
 function joinList(value: any) {
   if (!value) return "";
   if (Array.isArray(value)) return value.join(", ");
@@ -137,9 +299,18 @@ export default function JobsPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [matchingJobId, setMatchingJobId] = useState<string | null>(null);
+  const [duplicatingJobId, setDuplicatingJobId] = useState<string | null>(null);
+  const [teamUsers, setTeamUsers] = useState<TeamUser[]>([]);
+  const [loadingTeamUsers, setLoadingTeamUsers] = useState(false);
+  const [clients, setClients] = useState<RhClient[]>([]);
+  const [filters, setFilters] = useState<KanbanFilters>(emptyFilters);
+  const [draggingJobId, setDraggingJobId] = useState<string | null>(null);
+  const [isFormCollapsed, setIsFormCollapsed] = useState(false);
 
   useEffect(() => {
     loadJobs();
+    loadTeamUsers();
+    loadClients();
   }, []);
 
   useEffect(() => {
@@ -153,19 +324,68 @@ export default function JobsPage() {
     }
   }, [form.contractType]);
 
-  const orderedJobs = useMemo(() => {
-    return [...jobs].sort((a, b) => {
-      const order: Record<string, number> = {
-        open: 1,
-        draft: 2,
-        paused: 3,
-        closed: 4,
-        archived: 5,
-      };
+  const clientOptions = useMemo(() => {
+    return clients
+      .map((client) => ({
+        id: client.id,
+        name: client.companyName || client.name || "",
+      }))
+      .filter((client) => client.name)
+      .sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
+  }, [clients]);
 
-      return (order[a.status] || 99) - (order[b.status] || 99);
-    });
+  const cityOptions = useMemo(() => {
+    return Array.from(new Set(jobs.map((job) => job.city || "").filter(Boolean))).sort((a, b) =>
+      a.localeCompare(b, "pt-BR")
+    );
   }, [jobs]);
+
+  const filteredJobs = useMemo(() => {
+    const search = filters.search.trim().toLowerCase();
+
+    return jobs
+      .filter((job) => {
+        const clientName = getClientName(job);
+        const clientId = getClientId(job);
+        const responsibleUserId = getResponsibleUserId(job);
+        const priority = getPriority(job);
+
+        const matchesSearch =
+          !search ||
+          [job.title, clientName, job.city, job.state, job.neighborhood, job.contractType]
+            .filter(Boolean)
+            .join(" ")
+            .toLowerCase()
+            .includes(search);
+
+        return (
+          matchesSearch &&
+          (!filters.client || clientId === filters.client || clientName === filters.client) &&
+          (!filters.responsibleUserId || responsibleUserId === filters.responsibleUserId) &&
+          (!filters.priority || priority === filters.priority) &&
+          (!filters.status || job.status === filters.status) &&
+          (!filters.contractType || job.contractType === filters.contractType) &&
+          (!filters.city || job.city === filters.city)
+        );
+      })
+      .sort((a, b) => {
+        const priorityDiff =
+          (priorityRank[getPriority(a)] ?? 2) - (priorityRank[getPriority(b)] ?? 2);
+
+        if (priorityDiff !== 0) return priorityDiff;
+
+        return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+      });
+  }, [jobs, filters]);
+
+  const jobsByStatus = useMemo(() => {
+    return kanbanColumns.reduce<Record<string, Job[]>>((acc, column) => {
+      acc[column.key] = filteredJobs.filter((job) => job.status === column.key);
+      return acc;
+    }, {});
+  }, [filteredJobs]);
+
+  const totalVisibleJobs = useMemo(() => filteredJobs.length, [filteredJobs]);
 
   function updateForm(key: keyof JobForm, value: string) {
     setForm((current) => ({
@@ -174,12 +394,179 @@ export default function JobsPage() {
     }));
   }
 
+  function updateFilter(key: keyof KanbanFilters, value: string) {
+    setFilters((current) => ({
+      ...current,
+      [key]: value,
+    }));
+  }
+
+  async function loadClients() {
+    try {
+      const res = await fetch("/api/rh/clients", {
+        cache: "no-store",
+        credentials: "include",
+      });
+
+      const data = await res.json().catch(() => ({}));
+
+      if (res.ok) {
+        setClients(data.clients || []);
+      }
+    } catch (error) {
+      console.error("Erro ao carregar clientes:", error);
+    }
+  }
+
+  function selectClientByName(clientName: string) {
+    const selectedClient = clients.find((client) => {
+      const name = client.companyName || client.name || "";
+      return name.trim().toLowerCase() === clientName.trim().toLowerCase();
+    });
+
+    setForm((current) => ({
+      ...current,
+      department: clientName,
+      clientId: selectedClient?.id || "",
+    }));
+  }
+
+  async function getCurrentCompanyId() {
+    try {
+      const res = await fetch("/api/company/current", {
+        cache: "no-store",
+        credentials: "include",
+      });
+
+      const data = await res.json().catch(() => ({}));
+      const companyId = String(data?.company?.id || data?.companyId || "").trim();
+
+      if (res.ok && companyId) {
+        if (typeof window !== "undefined") {
+          localStorage.setItem("active_company_id", companyId);
+          localStorage.setItem("zentra_company_id", companyId);
+        }
+        return companyId;
+      }
+    } catch (error) {
+      console.warn("Não foi possível consultar a empresa atual pela API:", error);
+    }
+
+    if (typeof window !== "undefined") {
+      return (
+        localStorage.getItem("active_company_id") ||
+        localStorage.getItem("zentra_company_id") ||
+        localStorage.getItem("companyId") ||
+        ""
+      );
+    }
+
+    return "";
+  }
+
+  async function loadTeamUsers() {
+    try {
+      setLoadingTeamUsers(true);
+
+      const companyId = await getCurrentCompanyId();
+
+      if (!companyId) {
+        console.warn("Empresa atual não encontrada para carregar responsáveis.");
+        setTeamUsers([]);
+        return;
+      }
+
+      const res = await fetch(
+        `/api/admin/users?companyId=${encodeURIComponent(companyId)}&t=${Date.now()}`,
+        {
+          cache: "no-store",
+          credentials: "include",
+        }
+      );
+
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        console.error("Erro ao carregar usuários:", data.error || data);
+        setTeamUsers([]);
+        return;
+      }
+
+      const rawUsers = Array.isArray(data)
+        ? data
+        : Array.isArray(data.users)
+        ? data.users
+        : Array.isArray(data.data)
+        ? data.data
+        : [];
+
+      const normalizedUsers = rawUsers
+        .filter((user: TeamUser) => user && user.active !== false)
+        .map((user: TeamUser) => {
+          const membershipId = String(user.id || "").trim();
+          const authUserId = String(user.user_id || "").trim();
+          const valueId = authUserId || membershipId;
+
+          return {
+            ...user,
+            id: membershipId || valueId,
+            user_id: valueId,
+            name: String(user.name || user.email || "Usuário").trim(),
+          };
+        })
+        .filter((user: TeamUser) => Boolean(user.user_id || user.id));
+
+      setTeamUsers(normalizedUsers);
+
+      setForm((current) => {
+        if (!current.responsibleUserId) return current;
+
+        const selectedStillExists = normalizedUsers.some(
+          (user: TeamUser) =>
+            (user.user_id || user.id) === current.responsibleUserId
+        );
+
+        return selectedStillExists
+          ? current
+          : {
+              ...current,
+              responsibleUserId: "",
+              responsibleName: "",
+            };
+      });
+    } catch (error) {
+      console.error("Erro ao carregar usuários:", error);
+      setTeamUsers([]);
+    } finally {
+      setLoadingTeamUsers(false);
+    }
+  }
+
+  function selectResponsible(userId: string) {
+    const user = teamUsers.find((item) => (item.user_id || item.id) === userId);
+
+    setForm((current) => ({
+      ...current,
+      responsibleUserId: userId,
+      responsibleName: user?.name || user?.email || "",
+    }));
+  }
+
   function editJob(job: Job) {
     setEditingId(job.id);
 
     setForm({
       title: job.title || "",
-      department: job.department || "",
+      department: getClientName(job),
+      clientId: getClientId(job),
+      responsibleUserId: getResponsibleUserId(job),
+      responsibleName: getResponsibleName(job),
+      priority: getPriority(job),
+      startDate: getMeta(job, "startDate") || "",
+      dueDate: getMeta(job, "dueDate") || "",
+      meetLink: getMeta(job, "meetLink") || "",
+      processDate: getMeta(job, "processDate") || "",
+      processTime: getMeta(job, "processTime") || "",
       city: job.city || "",
       state: job.state || "",
       neighborhood: job.neighborhood || "",
@@ -308,6 +695,16 @@ export default function JobsPage() {
         experienceMode: getJson(job, "experienceMode") || "indiferente",
         minExperienceMonths: getJson(job, "minExperienceMonths") || "",
         requirementsText: job.requirements?.text || "",
+        clientId: getClientId(job),
+        clientName: getClientName(job),
+        responsibleUserId: getResponsibleUserId(job),
+        responsibleName: getResponsibleName(job),
+        priority: getPriority(job),
+        startDate: getMeta(job, "startDate") || "",
+        dueDate: getMeta(job, "dueDate") || "",
+        meetLink: getMeta(job, "meetLink") || "",
+        processDate: getMeta(job, "processDate") || "",
+        processTime: getMeta(job, "processTime") || "",
       }),
     });
 
@@ -319,6 +716,55 @@ export default function JobsPage() {
     }
 
     await loadJobs();
+  }
+
+  function handleDragStart(job: Job) {
+    setDraggingJobId(job.id);
+  }
+
+  async function handleDrop(targetStatus: string) {
+    const job = jobs.find((item) => item.id === draggingJobId);
+
+    setDraggingJobId(null);
+
+    if (!job || job.status === targetStatus) return;
+
+    await changeStatus(job, targetStatus);
+  }
+
+  async function duplicateJob(job: Job) {
+    const confirmed = confirm(
+      `Duplicar a vaga "${job.title}"?\n\nA cópia será criada como rascunho, sem candidatos, lotes ou entrevistas.`
+    );
+
+    if (!confirmed) return;
+
+    try {
+      setDuplicatingJobId(job.id);
+
+      const res = await fetch("/api/rh/jobs", {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          duplicateFromId: job.id,
+        }),
+      });
+
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        alert(data.error || "Erro ao duplicar vaga.");
+        return;
+      }
+
+      await loadJobs();
+      alert(`Vaga duplicada como rascunho: ${data.job?.title || `${job.title} - Cópia`}`);
+    } finally {
+      setDuplicatingJobId(null);
+    }
   }
 
   async function deleteJob(job: Job) {
@@ -482,16 +928,108 @@ export default function JobsPage() {
             </p>
           </div>
 
-          {editingId && (
-            <button style={styles.secondaryButton} onClick={cancelEdit}>
-              Cancelar edição
+          <div style={styles.headerActions}>
+            <button
+              type="button"
+              style={styles.secondaryButton}
+              onClick={() => setIsFormCollapsed((current) => !current)}
+            >
+              {isFormCollapsed ? "Mostrar formulário" : "Minimizar formulário"}
             </button>
-          )}
+
+            {editingId && (
+              <button style={styles.secondaryButton} onClick={cancelEdit}>
+                Cancelar edição
+              </button>
+            )}
+          </div>
         </div>
 
-        <div style={styles.formGrid}>
-          <Input label="Título da vaga" value={form.title} onChange={(v) => updateForm("title", v)} placeholder="Ex: Auxiliar Administrativo" />
-          <Input label="Departamento/cliente" value={form.department} onChange={(v) => updateForm("department", v)} placeholder="Ex: Multivar / RH" />
+        {!isFormCollapsed ? (
+          <>
+            <div style={styles.formGrid}>
+              <Input label="Título da vaga" value={form.title} onChange={(v) => updateForm("title", v)} placeholder="Ex: Auxiliar Administrativo" />
+
+          <label style={styles.label}>
+            Cliente
+            <div style={styles.clientFieldBox}>
+              <input
+                style={styles.input}
+                list="client-options"
+                value={form.department}
+                onChange={(e) => selectClientByName(e.target.value)}
+                onBlur={(e) => selectClientByName(e.target.value)}
+                placeholder="Busque pelo nome do cliente"
+              />
+              <a style={styles.inlineLinkButton} href="/crm/dashboard/clients" target="_blank" rel="noreferrer">
+                Cadastrar cliente
+              </a>
+            </div>
+            <datalist id="client-options">
+              {clientOptions.map((client) => (
+                <option key={client.id} value={client.name} />
+              ))}
+            </datalist>
+          </label>
+
+          <Field label="Responsável">
+            <div style={{ display: "grid", gap: 8 }}>
+              <select
+                style={styles.input}
+                value={form.responsibleUserId}
+                onChange={(e) => selectResponsible(e.target.value)}
+                disabled={loadingTeamUsers}
+              >
+                <option value="">
+                  {loadingTeamUsers ? "Carregando usuários..." : "Sem responsável"}
+                </option>
+                {!loadingTeamUsers && teamUsers.length === 0 && (
+                  <option value="" disabled>
+                    Nenhum usuário encontrado para esta empresa
+                  </option>
+                )}
+                {teamUsers.map((user) => {
+                  const id = user.user_id || user.id || "";
+                  return (
+                    <option key={id} value={id}>
+                      {user.name || user.email || "Usuário"} {user.role ? `- ${user.role}` : ""}
+                    </option>
+                  );
+                })}
+              </select>
+
+              <button
+                type="button"
+                style={{ ...styles.secondaryButton, width: "fit-content", padding: "8px 12px" }}
+                onClick={loadTeamUsers}
+                disabled={loadingTeamUsers}
+              >
+                {loadingTeamUsers ? "Atualizando..." : "Atualizar usuários"}
+              </button>
+            </div>
+          </Field>
+
+              <Field label="Prioridade">
+                <div style={styles.prioritySelector}>
+                  {(["urgent", "high", "normal", "low"] as const).map((priority) => {
+                    const active = form.priority === priority;
+                    return (
+                      <button
+                        key={priority}
+                        type="button"
+                        onClick={() => updateForm("priority", priority)}
+                        style={{
+                          ...styles.priorityOption,
+                          ...priorityPillStyle(priority),
+                          ...(active ? styles.priorityOptionActive : {}),
+                        }}
+                      >
+                        {priorityLabel[priority]}
+                      </button>
+                    );
+                  })}
+                </div>
+              </Field>
 
           <Field label="Tipo de contrato">
             <select style={styles.input} value={form.contractType} onChange={(e) => updateForm("contractType", e.target.value)}>
@@ -514,6 +1052,12 @@ export default function JobsPage() {
 
           <Input label="Quantidade de vagas" value={form.openings} onChange={(v) => updateForm("openings", v)} placeholder="Ex: 10" />
           <Input label="Turno / horário" value={form.shift} onChange={(v) => updateForm("shift", v)} placeholder="Ex: Manhã, tarde, comercial" />
+
+          <Input label="Data de início" value={form.startDate} onChange={(v) => updateForm("startDate", v)} placeholder="AAAA-MM-DD" />
+          <Input label="Data de vencimento" value={form.dueDate} onChange={(v) => updateForm("dueDate", v)} placeholder="AAAA-MM-DD" />
+          <Input label="Link do Meet" value={form.meetLink} onChange={(v) => updateForm("meetLink", v)} placeholder="Cole o link da entrevista" />
+          <Input label="Dia do processo seletivo" value={form.processDate} onChange={(v) => updateForm("processDate", v)} placeholder="AAAA-MM-DD" />
+          <Input label="Horário do processo seletivo" value={form.processTime} onChange={(v) => updateForm("processTime", v)} placeholder="Ex: 14:00" />
 
           <Input label="Cidade" value={form.city} onChange={(v) => updateForm("city", v)} placeholder="Ex: São Paulo" />
           <Input label="Estado" value={form.state} onChange={(v) => updateForm("state", v)} placeholder="Ex: SP" />
@@ -583,17 +1127,31 @@ export default function JobsPage() {
             Critérios adicionais para matching
             <textarea style={{ ...styles.input, minHeight: 95 }} value={form.requirementsText} onChange={(e) => updateForm("requirementsText", e.target.value)} placeholder="Ex: perfil comunicativo, mora próximo, disponibilidade aos sábados, estágio em administração..." />
           </label>
-        </div>
+            </div>
 
-        <div style={styles.actionRow}>
-          <button style={styles.secondaryButton} onClick={() => saveJob("draft")} disabled={saving}>
-            {saving ? "Salvando..." : "Salvar rascunho"}
-          </button>
+            <div style={styles.actionRow}>
+              <button style={styles.secondaryButton} onClick={() => saveJob("draft")} disabled={saving}>
+                {saving ? "Salvando..." : "Salvar rascunho"}
+              </button>
 
-          <button style={styles.primaryButton} onClick={() => saveJob("open")} disabled={saving}>
-            {saving ? "Publicando..." : editingId ? "Salvar e publicar" : "Publicar vaga"}
-          </button>
-        </div>
+              <button style={styles.primaryButton} onClick={() => saveJob("open")} disabled={saving}>
+                {saving ? "Publicando..." : editingId ? "Salvar e publicar" : "Publicar vaga"}
+              </button>
+            </div>
+          </>
+        ) : (
+          <div style={styles.collapsedFormBox}>
+            <div>
+              <strong>{editingId ? "Edição minimizada" : "Cadastro de vaga minimizado"}</strong>
+              <p style={styles.smallText}>
+                O formulário ficou recolhido para dar mais espaço ao Kanban. Clique em "Mostrar formulário" quando precisar criar ou editar uma vaga.
+              </p>
+            </div>
+            <button type="button" style={styles.primaryButton} onClick={() => setIsFormCollapsed(false)}>
+              Mostrar formulário
+            </button>
+          </div>
+        )}
       </section>
 
       <section style={styles.card}>
@@ -604,78 +1162,239 @@ export default function JobsPage() {
           </div>
         </div>
 
-        {loading && <div style={styles.empty}>Carregando vagas...</div>}
-        {!loading && !orderedJobs.length && <div style={styles.empty}>Nenhuma vaga cadastrada.</div>}
+        <div style={styles.filtersBox}>
+          <Input label="Buscar" value={filters.search} onChange={(v) => updateFilter("search", v)} placeholder="Vaga, cliente, cidade..." />
 
-        <div style={styles.jobsGrid}>
-          {orderedJobs.map((job) => (
-            <article key={job.id} style={styles.jobCard}>
-              <div style={styles.cardTop}>
-                <div>
-                  <strong style={styles.jobTitle}>{job.title}</strong>
-                  <p style={styles.muted}>{job.department || "Sem departamento"}</p>
-                </div>
+          <Field label="Cliente">
+            <select style={styles.input} value={filters.client} onChange={(e) => updateFilter("client", e.target.value)}>
+              <option value="">Todos</option>
+              {clientOptions.map((client) => (
+                <option key={client.id} value={client.id}>{client.name}</option>
+              ))}
+            </select>
+          </Field>
 
-                <span style={styles.badge}>{statusLabel[job.status] || job.status}</span>
-              </div>
-
-              <div style={styles.tags}>
-                {job.contractType && <span>{job.contractType}</span>}
-                {job.workMode && <span>{job.workMode}</span>}
-                {(job.city || job.state) && <span>{[job.city, job.state].filter(Boolean).join(" / ")}</span>}
-                {job.neighborhood && <span>{job.neighborhood}</span>}
-                {job.region && <span>{regionLabel[job.region] || job.region}</span>}
-              </div>
-
-              <div style={styles.criteriaBox}>
-                <span><b>Idade:</b> {getJson(job, "ageMin") || "-"} até {getJson(job, "ageMax") || "-"}</span>
-                <span><b>Escolaridade:</b> {job.educationRequired || "-"}</span>
-                <span><b>Curso:</b> {getJson(job, "courseArea") || "-"}</span>
-                <span><b>Experiência:</b> {getJson(job, "experienceMode") || job.experienceRequired || "-"}</span>
-                <span><b>Turno:</b> {getJson(job, "shift") || "-"}</span>
-                <span><b>Vagas:</b> {getJson(job, "openings") || "-"}</span>
-              </div>
-
-              {(job.salaryMin || job.salaryMax) && (
-                <p style={styles.salary}>
-                  {money(job.salaryMin)} {job.salaryMax ? `até ${money(job.salaryMax)}` : ""}
-                </p>
+          <Field label="Responsável">
+            <select style={styles.input} value={filters.responsibleUserId} onChange={(e) => updateFilter("responsibleUserId", e.target.value)}>
+              <option value="">Todos</option>
+              {teamUsers.length === 0 && (
+                <option value="" disabled>
+                  Nenhum usuário encontrado
+                </option>
               )}
+              {teamUsers.map((user) => {
+                const id = user.user_id || user.id || "";
+                return <option key={id} value={id}>{user.name || user.email || "Usuário"}</option>;
+              })}
+            </select>
+          </Field>
 
-              <div style={styles.actionRow}>
-                <button style={styles.primaryButton} onClick={() => matchCandidates(job)} disabled={matchingJobId === job.id || job.status !== "open"}>
-                  {matchingJobId === job.id ? "Buscando..." : "Buscar candidatos"}
-                </button>
+          <Field label="Prioridade">
+            <select style={styles.input} value={filters.priority} onChange={(e) => updateFilter("priority", e.target.value)}>
+              <option value="">Todas</option>
+              {Object.entries(priorityLabel).map(([value, label]) => (
+                <option key={value} value={value}>{label}</option>
+              ))}
+            </select>
+          </Field>
 
-                <button style={styles.secondaryButton} onClick={() => editJob(job)}>
-                  Editar
-                </button>
+          <Field label="Status">
+            <select style={styles.input} value={filters.status} onChange={(e) => updateFilter("status", e.target.value)}>
+              <option value="">Todos</option>
+              {kanbanColumns.map((column) => (
+                <option key={column.key} value={column.key}>{column.label}</option>
+              ))}
+            </select>
+          </Field>
 
-                {job.status !== "paused" && (
-                  <button style={styles.secondaryButton} onClick={() => changeStatus(job, "paused")}>
-                    Pausar
-                  </button>
-                )}
+          <Field label="Contrato">
+            <select style={styles.input} value={filters.contractType} onChange={(e) => updateFilter("contractType", e.target.value)}>
+              <option value="">Todos</option>
+              <option value="clt">CLT</option>
+              <option value="estagio">Estágio</option>
+              <option value="pj">PJ</option>
+              <option value="temporario">Temporário</option>
+              <option value="jovem_aprendiz">Jovem Aprendiz</option>
+              <option value="freelancer">Freelancer</option>
+            </select>
+          </Field>
 
-                {job.status !== "closed" && (
-                  <button style={styles.secondaryButton} onClick={() => changeStatus(job, "closed")}>
-                    Fechar
-                  </button>
-                )}
+          <Field label="Cidade">
+            <select style={styles.input} value={filters.city} onChange={(e) => updateFilter("city", e.target.value)}>
+              <option value="">Todas</option>
+              {cityOptions.map((city) => (
+                <option key={city} value={city}>{city}</option>
+              ))}
+            </select>
+          </Field>
 
-                {job.status !== "open" && (
-                  <button style={styles.secondaryButton} onClick={() => changeStatus(job, "open")}>
-                    Reabrir
-                  </button>
-                )}
-
-                <button style={styles.dangerButton} onClick={() => deleteJob(job)}>
-                  Excluir
-                </button>
-              </div>
-            </article>
-          ))}
+          <button style={styles.secondaryButton} onClick={() => setFilters(emptyFilters)}>
+            Limpar filtros
+          </button>
         </div>
+
+        {loading && <div style={styles.empty}>Carregando vagas...</div>}
+        {!loading && !totalVisibleJobs && <div style={styles.empty}>Nenhuma vaga cadastrada.</div>}
+
+        {!loading && Boolean(totalVisibleJobs) && (
+          <div style={styles.kanbanBoard}>
+            {kanbanColumns.map((column) => {
+              const columnJobs = jobsByStatus[column.key] || [];
+
+              return (
+                <section
+                  key={column.key}
+                  style={styles.kanbanColumn}
+                  onDragOver={(event) => event.preventDefault()}
+                  onDrop={() => handleDrop(column.key)}
+                >
+                  <div style={styles.kanbanColumnHeader}>
+                    <div>
+                      <h3 style={styles.kanbanTitle}>{column.label}</h3>
+                      <p style={styles.kanbanHelper}>{column.helper}</p>
+                    </div>
+
+                    <span style={styles.kanbanCount}>{columnJobs.length}</span>
+                  </div>
+
+                  <div style={styles.kanbanCards}>
+                    {!columnJobs.length && (
+                      <div style={styles.kanbanEmpty}>
+                        Nenhuma vaga nesta etapa.
+                      </div>
+                    )}
+
+                    {columnJobs.map((job) => (
+                      <article
+                        key={job.id}
+                        style={{
+                          ...styles.jobCard,
+                          opacity: draggingJobId === job.id ? 0.55 : 1,
+                          borderColor: getPriority(job) === "urgent" ? "#fecaca" : getPriority(job) === "high" ? "#fed7aa" : "#dbeafe",
+                        }}
+                        draggable
+                        onDragStart={() => handleDragStart(job)}
+                        onDragEnd={() => setDraggingJobId(null)}
+                      >
+                        <div style={styles.cardTop}>
+                          <div>
+                            <strong style={styles.jobTitle}>{job.title}</strong>
+                            <p style={styles.muted}>{job.department || "Sem cliente"} {getClientId(job) ? "• vinculado" : ""}</p>
+                          </div>
+
+                          <div style={styles.cardBadges}>
+                            <span style={{ ...styles.priorityBadge, ...(styles as any)[`priority_${getPriority(job)}`] }}>
+                              {priorityLabel[getPriority(job)] || "Normal"}
+                            </span>
+                            <span style={styles.badge}>{statusLabel[job.status] || job.status}</span>
+                          </div>
+                        </div>
+
+                        <div style={styles.metaGrid}>
+                          <span><b>Responsável:</b> {getResponsibleName(job) || "Sem responsável"}</span>
+                          <span><b>Início:</b> {getMeta(job, "startDate") || "-"}</span>
+                          <span><b>Vencimento:</b> {getMeta(job, "dueDate") || "-"}</span>
+                          <span><b>Processo:</b> {[getMeta(job, "processDate"), getMeta(job, "processTime")].filter(Boolean).join(" às ") || "-"}</span>
+                          {getMeta(job, "meetLink") && <a style={styles.link} href={String(getMeta(job, "meetLink"))} target="_blank" rel="noreferrer">Abrir Meet</a>}
+                        </div>
+
+                        <div style={styles.tags}>
+                          {job.contractType && <span>{job.contractType}</span>}
+                          {job.workMode && <span>{job.workMode}</span>}
+                          {(job.city || job.state) && <span>{[job.city, job.state].filter(Boolean).join(" / ")}</span>}
+                          {job.neighborhood && <span>{job.neighborhood}</span>}
+                          {job.region && <span>{regionLabel[job.region] || job.region}</span>}
+                        </div>
+
+                        <div style={styles.criteriaBox}>
+                          <span><b>Idade:</b> {getJson(job, "ageMin") || "-"} até {getJson(job, "ageMax") || "-"}</span>
+                          <span><b>Escolaridade:</b> {job.educationRequired || "-"}</span>
+                          <span><b>Curso:</b> {getJson(job, "courseArea") || "-"}</span>
+                          <span><b>Experiência:</b> {getJson(job, "experienceMode") || job.experienceRequired || "-"}</span>
+                          <span><b>Turno:</b> {getJson(job, "shift") || "-"}</span>
+                          <span><b>Vagas:</b> {getJson(job, "openings") || "-"}</span>
+                        </div>
+
+                        {(job.salaryMin || job.salaryMax) && (
+                          <p style={styles.salary}>
+                            {money(job.salaryMin)} {job.salaryMax ? `até ${money(job.salaryMax)}` : ""}
+                          </p>
+                        )}
+
+                        <details style={styles.checklistBox}>
+                          <summary style={styles.checklistSummary}>Checklist do status</summary>
+                          <div style={styles.checklistItems}>
+                            {(statusChecklist[job.status] || []).map((item) => (
+                              <label key={item} style={styles.checkItem}>
+                                <input type="checkbox" />
+                                <span>{item}</span>
+                              </label>
+                            ))}
+                          </div>
+                        </details>
+
+                        <label style={styles.moveLabel}>
+                          Mover etapa
+                          <select
+                            style={styles.moveSelect}
+                            value={job.status}
+                            onChange={(event) => changeStatus(job, event.target.value)}
+                          >
+                            {kanbanColumns.map((item) => (
+                              <option key={item.key} value={item.key}>
+                                {item.label}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+
+                        <div style={styles.actionRow}>
+                          <button style={styles.primaryButton} onClick={() => matchCandidates(job)} disabled={matchingJobId === job.id || job.status === "draft" || job.status === "closed" || job.status === "canceled"}>
+                            {matchingJobId === job.id ? "Buscando..." : "Buscar candidatos"}
+                          </button>
+
+                          <button style={styles.secondaryButton} onClick={() => editJob(job)}>
+                            Editar
+                          </button>
+
+                          <button
+                            style={styles.secondaryButton}
+                            onClick={() => duplicateJob(job)}
+                            disabled={duplicatingJobId === job.id}
+                          >
+                            {duplicatingJobId === job.id ? "Duplicando..." : "Duplicar"}
+                          </button>
+
+                          {job.status !== "paused" && (
+                            <button style={styles.secondaryButton} onClick={() => changeStatus(job, "paused")}>
+                              Pausar
+                            </button>
+                          )}
+
+                          {job.status !== "closed" && (
+                            <button style={styles.secondaryButton} onClick={() => changeStatus(job, "closed")}>
+                              Concluir
+                            </button>
+                          )}
+
+                          {job.status !== "open" && (
+                            <button style={styles.secondaryButton} onClick={() => changeStatus(job, "open")}>
+                              Reabrir
+                            </button>
+                          )}
+
+                          <button style={styles.dangerButton} onClick={() => deleteJob(job)}>
+                            Excluir
+                          </button>
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                </section>
+              );
+            })}
+          </div>
+        )}
       </section>
     </main>
   );
@@ -786,6 +1505,12 @@ const styles: Record<string, React.CSSProperties> = {
     flexWrap: "wrap",
     alignItems: "center",
   },
+  headerActions: {
+    display: "flex",
+    gap: 10,
+    flexWrap: "wrap",
+    alignItems: "center",
+  },
   sectionTitle: {
     margin: 0,
     fontSize: 22,
@@ -795,6 +1520,17 @@ const styles: Record<string, React.CSSProperties> = {
     margin: "4px 0 0",
     color: "#64748b",
     fontSize: 12,
+  },
+  filtersBox: {
+    marginTop: 16,
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+    gap: 12,
+    alignItems: "end",
+    border: "1px solid #dbeafe",
+    background: "#f8fafc",
+    borderRadius: 22,
+    padding: 14,
   },
   formGrid: {
     marginTop: 16,
@@ -819,6 +1555,53 @@ const styles: Record<string, React.CSSProperties> = {
     outline: "none",
     fontSize: 14,
     color: "#0f172a",
+  },
+  clientFieldBox: {
+    display: "grid",
+    gridTemplateColumns: "1fr auto",
+    gap: 8,
+    alignItems: "center",
+  },
+  inlineLinkButton: {
+    border: "1px solid #bfdbfe",
+    borderRadius: 14,
+    padding: "12px 12px",
+    background: "#fff",
+    color: "#2563eb",
+    fontWeight: 950,
+    fontSize: 12,
+    textDecoration: "none",
+    whiteSpace: "nowrap",
+  },
+  prioritySelector: {
+    display: "grid",
+    gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+    gap: 8,
+  },
+  priorityOption: {
+    borderRadius: 14,
+    padding: "13px 10px",
+    fontWeight: 950,
+    cursor: "pointer",
+    fontSize: 13,
+    transition: "transform .15s ease, box-shadow .15s ease, opacity .15s ease",
+  },
+  priorityOptionActive: {
+    transform: "translateY(-1px)",
+    boxShadow: "0 12px 24px rgba(15,23,42,.16)",
+    outline: "3px solid rgba(37,99,235,.18)",
+  },
+  collapsedFormBox: {
+    marginTop: 16,
+    border: "1px dashed #93c5fd",
+    background: "#f8fafc",
+    borderRadius: 22,
+    padding: 16,
+    display: "flex",
+    justifyContent: "space-between",
+    gap: 12,
+    alignItems: "center",
+    flexWrap: "wrap",
   },
   actionRow: {
     marginTop: 14,
@@ -864,6 +1647,96 @@ const styles: Record<string, React.CSSProperties> = {
     color: "#64748b",
     background: "#f8fafc",
   },
+  kanbanBoard: {
+    marginTop: 16,
+    display: "flex",
+    gap: 14,
+    overflowX: "auto",
+    paddingBottom: 14,
+    WebkitOverflowScrolling: "touch",
+  },
+  kanbanColumn: {
+    minWidth: 310,
+    width: 310,
+    flex: "0 0 310px",
+    border: "1px solid #dbeafe",
+    background: "#f8fafc",
+    borderRadius: 24,
+    padding: 12,
+    display: "flex",
+    flexDirection: "column",
+    gap: 12,
+    maxHeight: "78vh",
+  },
+  kanbanColumnHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    gap: 10,
+    alignItems: "flex-start",
+    position: "sticky",
+    top: 0,
+    background: "#f8fafc",
+    zIndex: 1,
+    paddingBottom: 4,
+  },
+  kanbanTitle: {
+    margin: 0,
+    color: "#0f172a",
+    fontSize: 15,
+    fontWeight: 950,
+    lineHeight: 1.25,
+  },
+  kanbanHelper: {
+    margin: "4px 0 0",
+    color: "#64748b",
+    fontSize: 11,
+    lineHeight: 1.35,
+  },
+  kanbanCount: {
+    border: "1px solid #bfdbfe",
+    background: "#eff6ff",
+    color: "#1d4ed8",
+    borderRadius: 999,
+    padding: "5px 9px",
+    fontSize: 12,
+    fontWeight: 950,
+    minWidth: 28,
+    textAlign: "center",
+  },
+  kanbanCards: {
+    display: "grid",
+    gap: 12,
+    overflowY: "auto",
+    paddingRight: 2,
+  },
+  kanbanEmpty: {
+    border: "1px dashed #bfdbfe",
+    background: "#fff",
+    borderRadius: 18,
+    padding: 14,
+    color: "#94a3b8",
+    fontSize: 12,
+    textAlign: "center",
+  },
+  moveLabel: {
+    display: "grid",
+    gap: 6,
+    color: "#334155",
+    fontSize: 12,
+    fontWeight: 900,
+  },
+  moveSelect: {
+    width: "100%",
+    boxSizing: "border-box",
+    borderRadius: 14,
+    border: "1px solid #bfdbfe",
+    background: "#fff",
+    padding: "10px 12px",
+    outline: "none",
+    fontSize: 13,
+    color: "#0f172a",
+    fontWeight: 800,
+  },
   jobsGrid: {
     marginTop: 16,
     display: "grid",
@@ -893,6 +1766,42 @@ const styles: Record<string, React.CSSProperties> = {
     color: "#64748b",
     fontSize: 12,
   },
+  cardBadges: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 6,
+    alignItems: "flex-end",
+  },
+  priorityBadge: {
+    borderRadius: 999,
+    padding: "6px 10px",
+    fontSize: 11,
+    fontWeight: 950,
+    whiteSpace: "nowrap",
+    border: "1px solid #bfdbfe",
+    background: "#eff6ff",
+    color: "#1d4ed8",
+  },
+  priority_urgent: {
+    borderColor: "#fecaca",
+    background: "#fef2f2",
+    color: "#dc2626",
+  },
+  priority_high: {
+    borderColor: "#fde68a",
+    background: "#fffbeb",
+    color: "#ca8a04",
+  },
+  priority_normal: {
+    borderColor: "#bfdbfe",
+    background: "#eff6ff",
+    color: "#2563eb",
+  },
+  priority_low: {
+    borderColor: "#e2e8f0",
+    background: "#f8fafc",
+    color: "#64748b",
+  },
   badge: {
     border: "1px solid #bfdbfe",
     background: "#eff6ff",
@@ -902,6 +1811,21 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 12,
     fontWeight: 950,
     whiteSpace: "nowrap",
+  },
+  metaGrid: {
+    border: "1px solid #dbeafe",
+    background: "#fff",
+    borderRadius: 16,
+    padding: 10,
+    display: "grid",
+    gap: 6,
+    color: "#475569",
+    fontSize: 12,
+  },
+  link: {
+    color: "#2563eb",
+    fontWeight: 950,
+    textDecoration: "none",
   },
   tags: {
     display: "flex",
@@ -917,6 +1841,31 @@ const styles: Record<string, React.CSSProperties> = {
     gap: 6,
     color: "#475569",
     fontSize: 13,
+  },
+  checklistBox: {
+    border: "1px solid #dbeafe",
+    borderRadius: 16,
+    background: "#ffffff",
+    padding: 10,
+  },
+  checklistSummary: {
+    cursor: "pointer",
+    color: "#1d4ed8",
+    fontSize: 12,
+    fontWeight: 950,
+  },
+  checklistItems: {
+    marginTop: 10,
+    display: "grid",
+    gap: 7,
+  },
+  checkItem: {
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    color: "#475569",
+    fontSize: 12,
+    fontWeight: 700,
   },
   salary: {
     margin: 0,

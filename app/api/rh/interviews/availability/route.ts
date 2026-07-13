@@ -132,7 +132,7 @@ async function getJobTitle(supabase: any, companyId: string, jobId: string) {
 async function upsertLeadFromSlot(supabase: any, slot: any, status: string) {
   const leadStatusMap: Record<string, string> = {
     confirmed: "entrevista_confirmada",
-    approved: "contratado",
+    approved: "aguardando_cliente",
     rejected: "nao_aprovado",
     no_show: "nao_compareceu",
   };
@@ -396,7 +396,7 @@ async function updateLeadStatusForInterview({
 }) {
   const leadStatusMap: Record<string, string> = {
     confirmed: "entrevista_confirmada",
-    approved: "contratado",
+    approved: "aguardando_cliente",
     rejected: "nao_aprovado",
     no_show: "nao_compareceu",
     reschedule: "quer_agendar_entrevista",
@@ -499,7 +499,8 @@ async function updateLeadStatusForInterview({
 }
 
 
-async function createOrUpdateHiringFromInterviewAction({
+
+async function createOrUpdateClientPresentationFromInterviewAction({
   supabase,
   companyId,
   slot,
@@ -514,114 +515,194 @@ async function createOrUpdateHiringFromInterviewAction({
   lead?: any;
   status: string;
 }) {
+  // Importante:
+  // Aprovar na entrevista NÃO manda mais para Contratações.
+  // Agora manda para "Apresentação de Candidatos" daquela vaga.
   if (status !== "approved") return null;
 
   const jobId = slotJobId(slot) || lead?.job_id || lead?.current_job_id || candidate?.job_id || null;
+  if (!jobId) {
+    console.warn("APRESENTAÇÃO AO CLIENTE SEM VAGA:", { slotId: slot?.id, candidate, lead });
+    return null;
+  }
+
   const candidatePhone = normalizePhone(candidate?.phone || lead?.phone || slot?.reserved_phone || "");
   const candidateEmail = normalizeText(candidate?.email || lead?.email || slot?.reserved_email || "");
   const candidateName =
     clean(candidate?.name || lead?.name || slot?.reserved_name) || "Candidato";
 
-  if (!candidateName && !candidatePhone && !candidateEmail && !lead?.id) {
-    return null;
-  }
-
   let jobTitle = clean(slot?.title || "");
   if (!jobTitle && jobId) {
     jobTitle = await getJobTitle(supabase, companyId, jobId);
   }
-  if (!jobTitle) jobTitle = "Sem vaga informada";
+  if (!jobTitle) jobTitle = "Vaga";
 
-  const payload: any = {
+  // 1) Busca ou cria uma apresentação aberta para esta vaga.
+  let presentation: any = null;
+
+  const { data: existingPresentation, error: presentationFindError } = await supabase
+    .from("rh_client_presentations")
+    .select("*")
+    .eq("company_id", companyId)
+    .eq("job_id", jobId)
+    .in("status", ["draft", "sent", "viewed"])
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (presentationFindError) {
+    console.error("FIND CLIENT PRESENTATION ERROR:", presentationFindError);
+  }
+
+  presentation = existingPresentation || null;
+
+  if (!presentation?.id) {
+    const { data: createdPresentation, error: createPresentationError } = await supabase
+      .from("rh_client_presentations")
+      .insert({
+        company_id: companyId,
+        branch_id: slot?.branch_id || lead?.branch_id || null,
+        job_id: jobId,
+        title: jobTitle,
+        status: "draft",
+        expires_at: new Date(Date.now() + 1000 * 60 * 60 * 24 * 30).toISOString(),
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .select("*")
+      .maybeSingle();
+
+    if (createPresentationError) {
+      console.error("CREATE CLIENT PRESENTATION ERROR:", createPresentationError);
+      return null;
+    }
+
+    presentation = createdPresentation || null;
+  }
+
+  if (!presentation?.id) return null;
+
+  // 2) Evita duplicar o mesmo candidato na mesma apresentação.
+  let existingCandidate: any = null;
+
+  if (candidate?.attendee_id || candidate?.id) {
+    const attendeeId = candidate?.attendee_id || candidate?.id;
+    const { data } = await supabase
+      .from("rh_client_presentation_candidates")
+      .select("*")
+      .eq("company_id", companyId)
+      .eq("presentation_id", presentation.id)
+      .eq("attendee_id", String(attendeeId))
+      .limit(1)
+      .maybeSingle();
+    existingCandidate = data || null;
+  }
+
+  if (!existingCandidate && (lead?.id || candidate?.lead_id)) {
+    const leadId = lead?.id || candidate?.lead_id;
+    const { data } = await supabase
+      .from("rh_client_presentation_candidates")
+      .select("*")
+      .eq("company_id", companyId)
+      .eq("presentation_id", presentation.id)
+      .eq("lead_id", String(leadId))
+      .limit(1)
+      .maybeSingle();
+    existingCandidate = data || null;
+  }
+
+  if (!existingCandidate && candidatePhone) {
+    const { data } = await supabase
+      .from("rh_client_presentation_candidates")
+      .select("*")
+      .eq("company_id", companyId)
+      .eq("presentation_id", presentation.id)
+      .eq("candidate_phone", candidatePhone)
+      .limit(1)
+      .maybeSingle();
+    existingCandidate = data || null;
+  }
+
+  if (!existingCandidate && candidateEmail) {
+    const { data } = await supabase
+      .from("rh_client_presentation_candidates")
+      .select("*")
+      .eq("company_id", companyId)
+      .eq("presentation_id", presentation.id)
+      .ilike("candidate_email", candidateEmail)
+      .limit(1)
+      .maybeSingle();
+    existingCandidate = data || null;
+  }
+
+  const row: any = {
+    presentation_id: presentation.id,
     company_id: companyId,
     branch_id: slot?.branch_id || lead?.branch_id || null,
+    job_id: jobId,
+
     lead_id: lead?.id || candidate?.lead_id || null,
     candidate_id: candidate?.candidate_id || null,
-    job_id: jobId,
-    batch_id: slot?.batch_id || lead?.batch_id || candidate?.batch_id || null,
-    interview_id: candidate?.interview_id || null,
+    attendee_id: candidate?.attendee_id || candidate?.id || null,
+    interview_slot_id: slot?.id || null,
+
     candidate_name: candidateName,
     candidate_phone: candidatePhone || null,
     candidate_email: candidateEmail || null,
-    phone: candidatePhone || null,
-    email: candidateEmail || null,
+
     job_title: jobTitle,
-    status: "approved",
-    hired_at: new Date().toISOString(),
-    start_date: new Date().toISOString().slice(0, 10),
     meeting_url: slot?.meeting_url || null,
-    notes: "Criado automaticamente ao aprovar entrevista.",
+    interview_at: slot?.start_at || null,
+
+    status: "waiting_client",
     updated_at: new Date().toISOString(),
   };
 
-  // Busca contratação existente sem depender de campos instáveis.
-  let existing: any = null;
+  let presentationCandidate: any = null;
 
-  if (payload.lead_id) {
-    const { data } = await supabase
-      .from("rh_hirings")
-      .select("*")
-      .eq("company_id", companyId)
-      .eq("lead_id", payload.lead_id)
-      .limit(1)
-      .maybeSingle();
-    existing = data || null;
-  }
-
-  if (!existing && payload.candidate_phone) {
-    const { data } = await supabase
-      .from("rh_hirings")
-      .select("*")
-      .eq("company_id", companyId)
-      .eq("candidate_phone", payload.candidate_phone)
-      .limit(1)
-      .maybeSingle();
-    existing = data || null;
-  }
-
-  if (!existing && payload.candidate_email) {
-    const { data } = await supabase
-      .from("rh_hirings")
-      .select("*")
-      .eq("company_id", companyId)
-      .ilike("candidate_email", payload.candidate_email)
-      .limit(1)
-      .maybeSingle();
-    existing = data || null;
-  }
-
-  if (existing?.id) {
+  if (existingCandidate?.id) {
     const { data, error } = await supabase
-      .from("rh_hirings")
-      .update(payload)
-      .eq("id", existing.id)
+      .from("rh_client_presentation_candidates")
+      .update(row)
+      .eq("id", existingCandidate.id)
       .eq("company_id", companyId)
       .select("*")
       .maybeSingle();
 
     if (error) {
-      console.error("UPDATE HIRING FROM INTERVIEW ACTION ERROR:", error);
+      console.error("UPDATE CLIENT PRESENTATION CANDIDATE ERROR:", error);
       return null;
     }
 
-    return data || existing;
+    presentationCandidate = data || existingCandidate;
+  } else {
+    const { data, error } = await supabase
+      .from("rh_client_presentation_candidates")
+      .insert({
+        ...row,
+        created_at: new Date().toISOString(),
+      })
+      .select("*")
+      .maybeSingle();
+
+    if (error) {
+      console.error("CREATE CLIENT PRESENTATION CANDIDATE ERROR:", error);
+      return null;
+    }
+
+    presentationCandidate = data || null;
   }
 
-  const { data, error } = await supabase
-    .from("rh_hirings")
-    .insert({
-      ...payload,
-      created_at: new Date().toISOString(),
-    })
-    .select("*")
-    .maybeSingle();
+  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.NEXT_PUBLIC_SITE_URL || "";
+  const clientLink = presentation?.token
+    ? `${baseUrl}/cliente/vaga/${presentation.token}`
+    : null;
 
-  if (error) {
-    console.error("CREATE HIRING FROM INTERVIEW ACTION ERROR:", error);
-    return null;
-  }
-
-  return data || null;
+  return {
+    presentation,
+    candidate: presentationCandidate,
+    clientLink,
+  };
 }
 
 async function updateSharedAttendeeStatus({
@@ -662,7 +743,7 @@ async function updateSharedAttendeeStatus({
       jobId: slotJobId(slot) || null,
     });
 
-    const hiring = await createOrUpdateHiringFromInterviewAction({
+    const clientPresentation = await createOrUpdateClientPresentationFromInterviewAction({
       supabase,
       companyId,
       slot,
@@ -680,7 +761,7 @@ async function updateSharedAttendeeStatus({
       success: true,
       attendee: null,
       lead,
-      hiring,
+      clientPresentation,
       fallback: true,
     };
   }
@@ -718,7 +799,7 @@ async function updateSharedAttendeeStatus({
     jobId: slotJobId(slot) || null,
   });
 
-  const hiring = await createOrUpdateHiringFromInterviewAction({
+  const clientPresentation = await createOrUpdateClientPresentationFromInterviewAction({
     supabase,
     companyId,
     slot,
@@ -731,7 +812,7 @@ async function updateSharedAttendeeStatus({
     success: true,
     attendee,
     lead,
-    hiring,
+    clientPresentation,
   };
 }
 
@@ -773,7 +854,7 @@ async function updateCandidateInterviewStatus({
     jobId,
   });
 
-  const hiring = await createOrUpdateHiringFromInterviewAction({
+  const clientPresentation = await createOrUpdateClientPresentationFromInterviewAction({
     supabase,
     companyId,
     slot,
@@ -824,7 +905,7 @@ async function updateCandidateInterviewStatus({
     success: true,
     interview: null,
     lead,
-    hiring,
+    clientPresentation,
   };
 }
 
