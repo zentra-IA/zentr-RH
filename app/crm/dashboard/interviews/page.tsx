@@ -28,6 +28,13 @@ function formatOnlyDate(value?: string | null) {
   return date.toISOString().slice(0, 10);
 }
 
+function whatsappUrl(value?: string | null) {
+  const digits = String(value || "").replace(/\D/g, "");
+  if (!digits) return "";
+  const phone = digits.startsWith("55") ? digits : `55${digits}`;
+  return `https://wa.me/${phone}`;
+}
+
 function toDateTimeLocal(value?: string | null) {
   if (!value) return "";
   const date = new Date(value);
@@ -1000,7 +1007,18 @@ rejected: `Marcar ${person?.name || "este candidato"} como não aprovado?`,
                 {slot.reserved_name && (!isShared || attendees.length === 0) && (
                   <div style={styles.reservedBox}>
                     <b>{slot.reserved_name}</b>
-                    <span>{slot.reserved_phone || "-"}</span>
+                    {slot.reserved_phone ? (
+                      <a
+                        href={whatsappUrl(slot.reserved_phone)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={styles.whatsappLink}
+                      >
+                        💬 {slot.reserved_phone}
+                      </a>
+                    ) : (
+                      <span>Telefone não informado</span>
+                    )}
                     <span>{slot.reserved_email || "-"}</span>
                   </div>
                 )}
@@ -1014,7 +1032,16 @@ rejected: `Marcar ${person?.name || "este candidato"} como não aprovado?`,
                     </span>
                   )}
                   {slot.location && <span>Local: {slot.location}</span>}
-                  {slot.meeting_url && <span>Link reunião: {slot.meeting_url}</span>}
+                  {slot.meeting_url && (
+                    <a
+                      href={slot.meeting_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={styles.meetingLink}
+                    >
+                      🎥 Abrir link da entrevista
+                    </a>
+                  )}
                   {slot.recruiter_name && <span>Recrutador: {slot.recruiter_name}</span>}
                   {slot.recruiter_phone && <span>WhatsApp recrutador: {slot.recruiter_phone}</span>}
                 </div>
@@ -1033,7 +1060,18 @@ rejected: `Marcar ${person?.name || "este candidato"} como não aprovado?`,
                         <div key={person.id || person.lead_id || person.phone || index} style={styles.attendeeCard}>
                           <div style={styles.attendeeInfo}>
                             <strong>{person.name || "Candidato"}</strong>
-                            <span>{person.phone || "Telefone não informado"}</span>
+                            {person.phone ? (
+                              <a
+                                href={whatsappUrl(person.phone)}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                style={styles.whatsappLink}
+                              >
+                                💬 {person.phone}
+                              </a>
+                            ) : (
+                              <span>Telefone não informado</span>
+                            )}
                             <span>{person.email || "E-mail não informado"}</span>
                             {personStatus && (
                               <small style={styles.smallText}>Status: {statusLabel(personStatus)}</small>
@@ -1274,14 +1312,14 @@ const styles: Record<string, CSSProperties> = {
   tabActive: { border: "1px solid #2563eb", borderRadius: 14, padding: "10px 12px", background: "#eff6ff", color: "#1d4ed8", fontWeight: 950, cursor: "pointer" },
   secondaryButton: { border: "1px solid #bfdbfe", borderRadius: 14, padding: "10px 12px", background: "#fff", color: "#2563eb", fontWeight: 900, cursor: "pointer", textDecoration: "none", textAlign: "center" },
   empty: { marginTop: 16, border: "1px dashed #93c5fd", borderRadius: 20, padding: 24, textAlign: "center", color: "#64748b" },
-  cardsGrid: { marginTop: 16, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(290px, 1fr))", gap: 14 },
-  slotCard: { border: "1px solid #dbeafe", background: "#f8fafc", borderRadius: 22, padding: 16, display: "grid", gap: 12 },
+  cardsGrid: { marginTop: 16, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 420px), 1fr))", gap: 16 },
+  slotCard: { border: "1px solid #dbeafe", background: "#ffffff", borderRadius: 22, padding: 18, display: "grid", gap: 14, boxShadow: "0 12px 30px rgba(15,23,42,.06)" },
   cardTop: { display: "flex", justifyContent: "space-between", gap: 12 },
   badge: { border: "1px solid #bfdbfe", background: "#eff6ff", color: "#1d4ed8", borderRadius: 999, padding: "6px 10px", fontSize: 11, fontWeight: 900, whiteSpace: "nowrap" },
   badgeReserved: { border: "1px solid #bbf7d0", background: "#f0fdf4", color: "#15803d", borderRadius: 999, padding: "6px 10px", fontSize: 11, fontWeight: 900, whiteSpace: "nowrap" },
   badgeCancelled: { border: "1px solid #fecaca", background: "#fff1f2", color: "#dc2626", borderRadius: 999, padding: "6px 10px", fontSize: 11, fontWeight: 900, whiteSpace: "nowrap" },
   reservedBox: { border: "1px solid #bbf7d0", background: "#f0fdf4", borderRadius: 14, padding: 12, display: "grid", gap: 4, color: "#166534", fontSize: 13 },
-  attendeesBox: { border: "1px solid #bfdbfe", background: "#eff6ff", borderRadius: 14, padding: 12, display: "grid", gap: 10, color: "#1e3a8a", fontSize: 13, maxHeight: 360, overflowY: "auto" },
+  attendeesBox: { border: "1px solid #bfdbfe", background: "#eff6ff", borderRadius: 14, padding: 12, display: "grid", gap: 10, color: "#1e3a8a", fontSize: 13 },
   attendeesHeader: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 },
   attendeesCount: { border: "1px solid #bfdbfe", background: "#fff", color: "#1d4ed8", borderRadius: 999, padding: "3px 8px", fontSize: 11, fontWeight: 900 },
   attendeeCard: { background: "#fff", border: "1px solid #dbeafe", borderRadius: 14, padding: 12, display: "grid", gap: 10 },
@@ -1299,4 +1337,6 @@ const styles: Record<string, CSSProperties> = {
   checkLabel: { display: "flex", alignItems: "center", gap: 8, fontWeight: 900, color: "#1d4ed8" },
   cardCheck: { display: "flex", alignItems: "center", marginRight: 8 },
   successButton: { border: 0, borderRadius: 14, padding: "10px 12px", background: "#16a34a", color: "#fff", fontWeight: 900, cursor: "pointer" },
+  whatsappLink: { display: "inline-flex", width: "fit-content", alignItems: "center", gap: 6, color: "#15803d", background: "#dcfce7", borderRadius: 10, padding: "7px 10px", textDecoration: "none", fontWeight: 900 },
+  meetingLink: { display: "inline-flex", width: "fit-content", alignItems: "center", color: "#1d4ed8", background: "#dbeafe", borderRadius: 10, padding: "7px 10px", textDecoration: "none", fontWeight: 900 },
 };

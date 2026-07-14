@@ -55,6 +55,13 @@ type MatchContext = {
   matches: any[];
 };
 
+type JobOption = {
+  id: string;
+  title: string;
+  status?: string | null;
+  client_name?: string | null;
+  company_contact_name?: string | null;
+};
 
 
 const STATUS_OPTIONS = [
@@ -104,6 +111,12 @@ export default function CandidatesPage() {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [matchContext, setMatchContext] = useState<MatchContext | null>(null);
   const [batchLoading, setBatchLoading] = useState(false);
+  const [jobs, setJobs] = useState<JobOption[]>([]);
+  const [manualBatchOpen, setManualBatchOpen] = useState(false);
+  const [manualBatchJobId, setManualBatchJobId] = useState("");
+  const [manualBatchName, setManualBatchName] = useState("");
+  const [manualBatchEnqueue, setManualBatchEnqueue] = useState(false);
+  const [jobSearch, setJobSearch] = useState("");
 
   const [filters, setFilters] = useState({
     q: "",
@@ -136,6 +149,7 @@ export default function CandidatesPage() {
 
   useEffect(() => {
     loadCandidates();
+    loadJobs();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -148,6 +162,57 @@ export default function CandidatesPage() {
 
     return params.toString();
   }, [filters]);
+
+  const filteredJobs = useMemo(() => {
+    const query = jobSearch.trim().toLowerCase();
+
+    if (!query) return jobs;
+
+    return jobs.filter((job) =>
+      [
+        job.title,
+        job.client_name,
+        job.company_contact_name,
+        job.status,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase()
+        .includes(query)
+    );
+  }, [jobs, jobSearch]);
+
+  async function loadJobs() {
+    try {
+      const res = await fetch("/api/rh/jobs", {
+        cache: "no-store",
+        credentials: "include",
+      });
+
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        console.error("Erro ao carregar vagas para lote manual:", data);
+        return;
+      }
+
+      const loadedJobs = Array.isArray(data.jobs)
+        ? data.jobs
+        : Array.isArray(data)
+          ? data
+          : [];
+
+      setJobs(
+        loadedJobs
+          .filter((job: JobOption) => job?.id)
+          .sort((a: JobOption, b: JobOption) =>
+            String(a.title || "").localeCompare(String(b.title || ""), "pt-BR")
+          )
+      );
+    } catch (error) {
+      console.error("Erro ao carregar vagas para lote manual:", error);
+    }
+  }
 
   async function loadCandidates(customQuery?: string) {
     try {
@@ -392,6 +457,95 @@ function shortText(value?: string | null, max = 90) {
         : `${source.length} contato(s) com e-mail copiado(s).`
     );
   }
+  function openManualBatchModal() {
+    if (!selectedIds.length) {
+      alert("Selecione pelo menos um candidato para criar o lote.");
+      return;
+    }
+
+    if (!jobs.length) {
+      alert("Nenhuma vaga disponível. Cadastre uma vaga antes de criar o lote.");
+      return;
+    }
+
+    setManualBatchJobId("");
+    setManualBatchName("");
+    setManualBatchEnqueue(false);
+    setJobSearch("");
+    setManualBatchOpen(true);
+  }
+
+  async function createManualRecruitmentBatch() {
+    if (!manualBatchJobId) {
+      alert("Escolha a vaga do lote.");
+      return;
+    }
+
+    if (!selectedIds.length) {
+      alert("Nenhum candidato selecionado.");
+      return;
+    }
+
+    const selectedJob = jobs.find((job) => job.id === manualBatchJobId);
+
+    if (!selectedJob) {
+      alert("Vaga não encontrada.");
+      return;
+    }
+
+    const confirmed = confirm(
+      `Criar lote manual com ${selectedIds.length} candidato(s) para a vaga "${selectedJob.title}"?`
+    );
+
+    if (!confirmed) return;
+
+    setBatchLoading(true);
+
+    try {
+      const res = await fetch("/api/rh/recruitment-batches", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        credentials: "include",
+        body: JSON.stringify({
+          jobId: selectedJob.id,
+          jobTitle: selectedJob.title,
+          candidateIds: selectedIds,
+          enqueue: manualBatchEnqueue,
+          intent: "RH_ABERTURA",
+          batchName: manualBatchName.trim() || undefined,
+          source: "manual_candidate_selection",
+        }),
+      });
+
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        alert(data.error || "Erro ao criar lote manual.");
+        return;
+      }
+
+      alert(
+        manualBatchEnqueue
+          ? `Lote criado e ${data.queued || 0} candidato(s) enviados para a fila do WhatsApp.`
+          : `Lote criado com ${data.totalCandidates || selectedIds.length} candidato(s).`
+      );
+
+      setSelectedIds([]);
+      setManualBatchOpen(false);
+      setManualBatchJobId("");
+      setManualBatchName("");
+      setManualBatchEnqueue(false);
+      await loadCandidates();
+    } catch (error) {
+      console.error("ERRO AO CRIAR LOTE MANUAL:", error);
+      alert("Erro ao criar lote manual.");
+    } finally {
+      setBatchLoading(false);
+    }
+  }
+
   async function createRecruitmentBatch(enqueue = false) {
     if (!matchContext?.jobId) {
       alert("Essa ação só funciona quando você veio do matching de uma vaga.");
@@ -1069,6 +1223,20 @@ function shortText(value?: string | null, max = 90) {
             </button>
 
             <button
+              style={{
+                ...styles.primaryButton,
+                opacity: selectedIds.length ? 1 : 0.55,
+              }}
+              type="button"
+              disabled={!selectedIds.length || batchLoading}
+              onClick={openManualBatchModal}
+            >
+              {selectedIds.length
+                ? `Criar lote (${selectedIds.length})`
+                : "Criar lote"}
+            </button>
+
+            <button
               style={styles.secondaryButton}
               type="button"
               onClick={() => copyFilteredContacts("phone")}
@@ -1278,6 +1446,99 @@ function shortText(value?: string | null, max = 90) {
         )}
       </section>
 
+      {manualBatchOpen && (
+        <div style={styles.modalOverlay}>
+          <div style={styles.manualBatchModal}>
+            <div style={styles.sectionHeader}>
+              <div>
+                <p style={styles.kicker}>Lote manual</p>
+                <h2 style={styles.sectionTitle}>Criar lote pela seleção de candidatos</h2>
+                <p style={styles.smallText}>
+                  {selectedIds.length} candidato(s) selecionado(s).
+                </p>
+              </div>
+
+              <button
+                style={styles.secondarySmallButton}
+                type="button"
+                onClick={() => setManualBatchOpen(false)}
+              >
+                Fechar
+              </button>
+            </div>
+
+            <div style={styles.manualBatchForm}>
+              <label style={styles.fieldLabel}>
+                Buscar vaga
+                <input
+                  style={styles.input}
+                  value={jobSearch}
+                  onChange={(event) => setJobSearch(event.target.value)}
+                  placeholder="Digite o nome da vaga ou cliente"
+                />
+              </label>
+
+              <label style={styles.fieldLabel}>
+                Vaga
+                <select
+                  style={styles.input}
+                  value={manualBatchJobId}
+                  onChange={(event) => setManualBatchJobId(event.target.value)}
+                >
+                  <option value="">Selecione uma vaga</option>
+                  {filteredJobs.map((job) => (
+                    <option key={job.id} value={job.id}>
+                      {job.title}
+                      {job.client_name || job.company_contact_name
+                        ? ` — ${job.client_name || job.company_contact_name}`
+                        : ""}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label style={styles.fieldLabel}>
+                Nome do lote (opcional)
+                <input
+                  style={styles.input}
+                  value={manualBatchName}
+                  onChange={(event) => setManualBatchName(event.target.value)}
+                  placeholder="Ex.: Lote manual 01"
+                />
+              </label>
+
+              <label style={styles.checkboxLabel}>
+                <input
+                  type="checkbox"
+                  checked={manualBatchEnqueue}
+                  onChange={(event) => setManualBatchEnqueue(event.target.checked)}
+                />
+                Criar o lote e enviar os candidatos para a fila do WhatsApp
+              </label>
+            </div>
+
+            <div style={styles.actionsRow}>
+              <button
+                style={styles.secondaryButton}
+                type="button"
+                onClick={() => setManualBatchOpen(false)}
+              >
+                Cancelar
+              </button>
+
+              <button
+                style={styles.primaryButton}
+                type="button"
+                disabled={batchLoading || !manualBatchJobId}
+                onClick={createManualRecruitmentBatch}
+              >
+                {batchLoading ? "Criando lote..." : "Confirmar criação"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {selectedCandidate && (
         <div style={styles.modalBackdrop} onClick={() => setSelectedCandidate(null)}>
           <div style={styles.modal} onClick={(event) => event.stopPropagation()}>
@@ -1406,6 +1667,48 @@ function shortText(value?: string | null, max = 90) {
 }
 
 const styles: Record<string, React.CSSProperties> = {
+  modalOverlay: {
+    position: "fixed",
+    inset: 0,
+    zIndex: 3000,
+    display: "grid",
+    placeItems: "center",
+    padding: 16,
+    background: "rgba(15, 23, 42, 0.55)",
+    backdropFilter: "blur(4px)",
+  },
+  manualBatchModal: {
+    width: "min(620px, 100%)",
+    maxHeight: "90vh",
+    overflowY: "auto",
+    display: "grid",
+    gap: 18,
+    padding: 22,
+    borderRadius: 24,
+    background: "#ffffff",
+    border: "1px solid #bfdbfe",
+    boxShadow: "0 30px 90px rgba(15, 23, 42, 0.35)",
+  },
+  manualBatchForm: {
+    display: "grid",
+    gap: 14,
+  },
+  fieldLabel: {
+    display: "grid",
+    gap: 7,
+    fontWeight: 800,
+    color: "#334155",
+  },
+  checkboxLabel: {
+    display: "flex",
+    alignItems: "flex-start",
+    gap: 10,
+    padding: 12,
+    borderRadius: 14,
+    background: "#eff6ff",
+    color: "#1e3a8a",
+    fontWeight: 800,
+  },
   page: {
     minHeight: "100vh",
     padding: 20,
