@@ -55,10 +55,14 @@ async function getJob(supabase: any, companyId: string, jobId: string) {
 }
 
 async function getCandidates(supabase: any, companyId: string, candidateIds: string[]) {
+  /*
+    A base de currículos é compartilhada entre as empresas.
+    O isolamento continua sendo aplicado à vaga, ao lote e aos leads,
+    mas não na leitura dos CandidateProfile selecionados.
+  */
   const { data, error } = await supabase
     .from("CandidateProfile")
     .select("*")
-    .eq("company_id", companyId)
     .in("id", candidateIds);
 
   if (error) throw new Error(error.message);
@@ -212,7 +216,6 @@ async function getBatchCandidates(supabase: any, companyId: string, batchId: str
     const { data: candidateData } = await supabase
       .from("CandidateProfile")
       .select("*")
-      .eq("company_id", companyId)
       .in("id", candidateIds);
 
     candidates = candidateData || [];
@@ -425,7 +428,7 @@ export async function POST(req: NextRequest) {
     }
 
     const batchName =
-      clean(body.name) ||
+      clean(body.batchName || body.name) ||
       `Lote ${job.title || "Vaga"} - ${new Date().toLocaleDateString("pt-BR")}`;
 
     const { data: batch, error: batchError } = await supabase
