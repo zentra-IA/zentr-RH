@@ -120,16 +120,40 @@ function hasFeature(data: any, feature: string) {
 }
 
 function formatTriggers(value: any) {
-  if (Array.isArray(value)) return value.join("\n");
+  if (Array.isArray(value)) {
+    return value
+      .map((item) =>
+        typeof item === "string"
+          ? item
+          : item?.value || item?.keyword || item?.text || ""
+      )
+      .filter(Boolean)
+      .join("\n");
+  }
+
+  if (typeof value === "string") {
+    return value
+      .split(/\n|,|;/)
+      .map((item) => item.trim())
+      .filter(Boolean)
+      .join("\n");
+  }
+
   return "";
 }
 
 function formatVariations(value: any) {
   if (Array.isArray(value)) {
     return value
-      .map((item) => item?.content || "")
+      .map((item) =>
+        typeof item === "string" ? item : item?.content || item?.text || ""
+      )
       .filter(Boolean)
       .join("\n");
+  }
+
+  if (typeof value === "string") {
+    return value;
   }
 
   return "";
@@ -441,19 +465,32 @@ const scheduleLink = previewJobId
     setBaseMessage(item.base_message || "");
 
     setMessageVariations(
-      Array.isArray(item.message_variations)
-        ? item.message_variations.map((v: any) => v.content).join("\n")
-        : ""
+      formatVariations(
+        item.message_variations ||
+          item.variations ||
+          item.responses ||
+          ""
+      )
     );
 
     setTriggerKeywords(
-      Array.isArray(item.trigger_keywords)
-        ? item.trigger_keywords.join("\n")
-        : ""
+      formatTriggers(
+        item.trigger_keywords ||
+          item.keywords ||
+          item.trigger_text ||
+          item.trigger_words ||
+          ""
+      )
     );
 
     setMatchType(item.match_type || "contains");
-    setKanbanStatus(item.kanban_status || "");
+    setKanbanStatus(
+      item.kanban_status ||
+        item.next_stage ||
+        item.stage ||
+        item.target_status ||
+        ""
+    );
     setMediaUrl(item.media_url || "");
     setMediaType(item.media_type || "text");
     setFlowMode(item.flow_mode || "global");

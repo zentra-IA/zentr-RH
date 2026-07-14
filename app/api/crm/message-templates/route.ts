@@ -272,18 +272,66 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ error: "ID obrigatório." }, { status: 400 });
     }
 
-    const payload = templatePayload(body, companyId, branchId || null);
+    const { data: existing, error: existingError } = await supabase
+      .from("message_templates")
+      .select("*")
+      .eq("id", id)
+      .eq("company_id", companyId)
+      .maybeSingle();
+
+    if (existingError) throw new Error(existingError.message);
+
+    if (!existing) {
+      return NextResponse.json(
+        { error: "Mensagem não encontrada ou não pertence à empresa atual." },
+        { status: 404 }
+      );
+    }
+
+    /*
+      PATCH parcial:
+      campos que não vieram no body mantêm o valor anterior.
+      Isso evita apagar gatilhos, status do Kanban e conteúdo ao apenas
+      ativar/desativar ou editar um único campo.
+    */
+    const mergedBody = {
+      ...existing,
+      ...body,
+      id,
+      trigger_keywords:
+        body.trigger_keywords !== undefined
+          ? body.trigger_keywords
+          : existing.trigger_keywords || existing.keywords || existing.trigger_text,
+      base_message:
+        body.base_message !== undefined
+          ? body.base_message
+          : existing.base_message || existing.message,
+      kanban_status:
+        body.kanban_status !== undefined
+          ? body.kanban_status
+          : existing.kanban_status,
+      message_variations:
+        body.message_variations !== undefined
+          ? body.message_variations
+          : existing.message_variations,
+    };
+
+    const payload = templatePayload(
+      mergedBody,
+      companyId,
+      branchId || existing.branch_id || null
+    );
 
     delete payload.company_id;
     delete payload.branch_id;
     delete payload.created_at;
 
     const validationError = validateTemplate({
+      ...existing,
       ...payload,
-      name: payload.name || "Mensagem",
     });
 
-    if (validationError && body.base_message !== undefined) {
+    if (validationError) {
       return NextResponse.json({ error: validationError }, { status: 400 });
     }
 

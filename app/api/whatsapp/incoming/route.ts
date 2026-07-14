@@ -418,30 +418,7 @@ async function sendMediaToWhatsApp(payload: any) {
   return data;
 }
 
-async function wasMessageAlreadyProcessed(
-  supabase: any,
-  leadId: string,
-  messageId?: string | null
-) {
-  if (!messageId) return false;
-
-  const { data, error } = await supabase
-    .from("messages")
-    .select("id")
-    .eq("lead_id", leadId)
-    .eq("direction", "received")
-    .contains("payload", { message_id: messageId })
-    .limit(1);
-
-  if (error) {
-    console.error("ERRO AO VERIFICAR DUPLICIDADE:", error);
-    return false;
-  }
-
-  return Boolean(data?.length);
-}
-
-async function saveReceivedMessage(
+async function claimIncomingMessage(
   supabase: any,
   leadId: string,
   companyId: string,
@@ -449,6 +426,67 @@ async function saveReceivedMessage(
   message: string,
   messageId?: string | null
 ) {
+  const normalizedMessageId = clean(messageId);
+
+  /*
+    Com messageId:
+    - a coluna incoming_message_id possui índice UNIQUE;
+    - duas chamadas concorrentes não conseguem processar a mesma mensagem;
+    - uma delas grava, a outra recebe erro 23505 e é ignorada.
+  */
+  if (normalizedMessageId) {
+    const { error } = await supabase.from("messages").insert({
+      company_id: companyId,
+      branch_id: branchId,
+      lead_id: leadId,
+      direction: "received",
+      topic: "whatsapp",
+      extension: "text",
+      content: message,
+      event: "message_received",
+      incoming_message_id: normalizedMessageId,
+      payload: { message_id: normalizedMessageId },
+      created_at: new Date().toISOString(),
+    });
+
+    if (!error) return true;
+
+    if (error.code === "23505") {
+      console.log("WHATSAPP_DUPLICATE_IGNORED:", {
+        leadId,
+        messageId: normalizedMessageId,
+      });
+      return false;
+    }
+
+    throw new Error(`Erro ao registrar mensagem recebida: ${error.message}`);
+  }
+
+  /*
+    Fallback para provedores que não enviam messageId:
+    ignora o mesmo texto recebido pelo mesmo lead em uma janela curta.
+  */
+  const recentLimit = new Date(Date.now() - 10_000).toISOString();
+
+  const { data: recent, error: recentError } = await supabase
+    .from("messages")
+    .select("id")
+    .eq("company_id", companyId)
+    .eq("lead_id", leadId)
+    .eq("direction", "received")
+    .eq("content", message)
+    .gte("created_at", recentLimit)
+    .limit(1);
+
+  if (recentError) {
+    console.error("ERRO AO VERIFICAR DUPLICIDADE SEM MESSAGE ID:", recentError);
+  }
+
+  if (recent?.length) {
+    console.log("WHATSAPP_RECENT_DUPLICATE_IGNORED:", { leadId, message });
+    return false;
+  }
+
   const { error } = await supabase.from("messages").insert({
     company_id: companyId,
     branch_id: branchId,
@@ -458,11 +496,16 @@ async function saveReceivedMessage(
     extension: "text",
     content: message,
     event: "message_received",
-    payload: { message_id: messageId || null },
+    incoming_message_id: null,
+    payload: { message_id: null },
     created_at: new Date().toISOString(),
   });
 
-  if (error) console.error("ERRO AO SALVAR MENSAGEM RECEBIDA:", error);
+  if (error) {
+    throw new Error(`Erro ao registrar mensagem recebida: ${error.message}`);
+  }
+
+  return true;
 }
 
 async function saveSentMessage(
@@ -929,38 +972,75 @@ async function findRhTriggeredTemplate({
     .select("*")
     .eq("company_id", companyId)
     .eq("active", true)
-    .order("created_at", { ascending: false });
+    .order("priority", { ascending: false })
+    .order("updated_at", { ascending: false });
 
   if (error) {
     console.error("ERRO TEMPLATES:", error);
     return null;
   }
 
+  const matches: Array<{
+    template: any;
+    keyword: string;
+    exact: boolean;
+    score: number;
+  }> = [];
+
   for (const template of templates || []) {
-    const keywords = extractKeywords(template);
-    if (!keywords.length) continue;
+    const matchType = String(
+      template.match_type || template.match_mode || "contains"
+    ).toLowerCase();
 
-    const hit = keywords.some((keyword: string) =>
-      text.includes(normalizeText(keyword))
-    );
+    for (const originalKeyword of extractKeywords(template)) {
+      const keyword = normalizeText(originalKeyword);
+      if (!keyword) continue;
 
-    if (!hit) continue;
+      const exact = text === keyword;
+      const hit =
+        matchType === "exact" || matchType === "equals"
+          ? exact
+          : exact || text.includes(keyword);
 
-    const rawMessage = template.base_message || template.message || template.content || template.response || template.final_message || template.caption || "";
+      if (!hit) continue;
 
-    return {
-      reply: rawMessage ? applyVariables(rawMessage, lead, extra) : null,
-      mediaUrl: template.media_url || null,
-      mediaType: template.media_type || "text",
-      kanbanStatus: getTemplateKanbanStatus(template),
-      notifyEnabled: Boolean(template.notify_enabled),
-      notifyNumber: template.notify_number || null,
-      notifyMessage: template.notify_message || null,
-      source: "triggered_template",
-    };
+      matches.push({
+        template,
+        keyword,
+        exact,
+        score:
+          (exact ? 100_000 : 0) +
+          keyword.length * 100 +
+          Number(template.priority || 0),
+      });
+    }
   }
 
-  return null;
+  matches.sort((a, b) => b.score - a.score);
+
+  const selected = matches[0]?.template;
+  if (!selected) return null;
+
+  const rawMessage =
+    selected.base_message ||
+    selected.message ||
+    selected.content ||
+    selected.response ||
+    selected.final_message ||
+    selected.caption ||
+    "";
+
+  return {
+    reply: rawMessage ? applyVariables(rawMessage, lead, extra) : null,
+    mediaUrl: selected.media_url || null,
+    mediaType: selected.media_type || "text",
+    kanbanStatus: getTemplateKanbanStatus(selected),
+    notifyEnabled: Boolean(selected.notify_enabled),
+    notifyNumber: selected.notify_number || null,
+    notifyMessage: selected.notify_message || null,
+    source: "triggered_template",
+    templateId: selected.id,
+  };
 }
 
 async function getDefaultRhTemplate({
@@ -1847,13 +1927,23 @@ if (queueContext) {
   }
 }
 
-    const duplicated = await wasMessageAlreadyProcessed(supabase, lead.id, messageId);
+    const claimed = await claimIncomingMessage(
+      supabase,
+      lead.id,
+      companyId,
+      lead.branch_id || branchId,
+      message,
+      messageId
+    );
 
-    if (duplicated) {
-      return NextResponse.json({ success: true, action: "duplicate_ignored" });
+    if (!claimed) {
+      return NextResponse.json({
+        success: true,
+        action: "duplicate_ignored",
+        lead_id: lead.id,
+        message_id: messageId || null,
+      });
     }
-
-    await saveReceivedMessage(supabase, lead.id, companyId, lead.branch_id || branchId, message, messageId);
 
     const lockedStatuses = [
       "entrevista_agendada",
@@ -1992,6 +2082,13 @@ console.log("CONTEXTO FINAL DO LEAD PARA TEMPLATE:", {
         : null);
 
     if (finalKanbanStatus) {
+      console.log("KANBAN_AUTO_MOVE_REQUEST:", {
+        lead_id: lead.id,
+        from: lead.status,
+        to: finalKanbanStatus,
+        source: finalReply.source,
+      });
+
       const { data: updatedStatusLead, error: statusError } = await supabase
         .from("leads")
         .update({
