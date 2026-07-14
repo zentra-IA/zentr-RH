@@ -58,6 +58,37 @@ function normalizePhone(value: any) {
   return digits;
 }
 
+function phoneFromWhatsappIdentifiers(...values: any[]) {
+  for (const value of values) {
+    const raw = clean(value);
+    if (!raw) continue;
+
+    /*
+      @s.whatsapp.net normalmente contém o número real.
+      @lid é um identificador interno do WhatsApp e não deve virar telefone.
+    */
+    if (raw.includes("@s.whatsapp.net")) {
+      const phone = normalizePhone(raw.split("@")[0]);
+      if (phone) return phone;
+    }
+
+    if (!raw.includes("@")) {
+      const phone = normalizePhone(raw);
+      if (phone) return phone;
+    }
+  }
+
+  return null;
+}
+
+function effectiveLeadPhone(lead: any) {
+  return (
+    normalizePhone(lead?.phone) ||
+    phoneFromWhatsappIdentifiers(lead?.remote_jid) ||
+    null
+  );
+}
+
 function normalizeStatus(value: any) {
   const status = clean(value || "novo");
   const normalized = LEGACY_TO_NEW[status] || status;
@@ -67,6 +98,7 @@ function normalizeStatus(value: any) {
 function normalizeLead(lead: any) {
   return {
     ...lead,
+    phone: effectiveLeadPhone(lead),
     status: normalizeStatus(lead.status),
   };
 }
@@ -207,7 +239,12 @@ export async function POST(req: NextRequest) {
     const { companyId, branchId } = await requireCompany(req);
     const body = await req.json();
 
-    const phone = normalizePhone(body.phone || body.whatsapp || body.telefone);
+    const remoteJid = clean(body.remote_jid || body.remoteJid) || null;
+    const whatsappLid = clean(body.whatsapp_lid || body.whatsappLid) || null;
+
+    const phone =
+      normalizePhone(body.phone || body.whatsapp || body.telefone) ||
+      phoneFromWhatsappIdentifiers(remoteJid);
 
     if (!phone) {
       return NextResponse.json(
@@ -226,6 +263,8 @@ export async function POST(req: NextRequest) {
       branch_id: branchId || body.branch_id || null,
       name: clean(body.name || body.nome) || "Candidato",
       phone,
+      remote_jid: remoteJid,
+      whatsapp_lid: whatsappLid,
       email: clean(body.email) || null,
       status,
       job_id: jobId,
@@ -253,6 +292,9 @@ export async function POST(req: NextRequest) {
       const updatePayload: any = {
         name: payload.name || existing.name,
         email: payload.email || existing.email || null,
+        remote_jid: payload.remote_jid || existing.remote_jid || null,
+        whatsapp_lid: payload.whatsapp_lid || existing.whatsapp_lid || null,
+        phone: payload.phone || effectiveLeadPhone(existing) || null,
         updated_at: payload.updated_at,
       };
 
@@ -328,8 +370,25 @@ export async function PATCH(req: NextRequest) {
     }
 
     if (body.email !== undefined) data.email = clean(body.email) || null;
-    if (body.phone !== undefined || body.telefone !== undefined) {
-      data.phone = normalizePhone(body.phone || body.telefone);
+
+    if (body.remote_jid !== undefined || body.remoteJid !== undefined) {
+      data.remote_jid = clean(body.remote_jid || body.remoteJid) || null;
+    }
+
+    if (body.whatsapp_lid !== undefined || body.whatsappLid !== undefined) {
+      data.whatsapp_lid = clean(body.whatsapp_lid || body.whatsappLid) || null;
+    }
+
+    if (
+      body.phone !== undefined ||
+      body.telefone !== undefined ||
+      body.remote_jid !== undefined ||
+      body.remoteJid !== undefined
+    ) {
+      data.phone =
+        normalizePhone(body.phone || body.telefone) ||
+        phoneFromWhatsappIdentifiers(body.remote_jid || body.remoteJid) ||
+        null;
     }
 
     if (body.status !== undefined) data.status = normalizeStatus(body.status);

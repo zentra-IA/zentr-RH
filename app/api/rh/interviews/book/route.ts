@@ -55,8 +55,9 @@ function leadWhatsappRecipient(lead: any, fallback?: any) {
 }
 
 function buildSession(companyId: string) {
-  // Cada empresa usa sua própria sessão/QR Code.
-  return `${companyId}_${RH_REMINDER_SESSION}`;
+  // O WhatsApp Server deste projeto trabalha com sessionId numérico (ex: 1).
+  // Usar `${companyId}_1` impede o envio da confirmação em alguns ambientes.
+  return RH_REMINDER_SESSION;
 }
 
 function appBaseUrl() {
@@ -860,10 +861,20 @@ export async function POST(req: NextRequest) {
     const shouldCloseSlot =
       !isSharedAgenda || nextReservedCount >= maxCandidates;
 
+    /*
+      O lead pode ter o telefone em phone, remote_jid ou whatsapp_lid.
+      Para os lembretes, precisamos persistir um destinatário real no slot.
+      A função leadWhatsappRecipient já trata telefone comum, @s.whatsapp.net e @lid.
+    */
+    const reservedWhatsappRecipient = leadWhatsappRecipient(
+      updatedLead,
+      currentSlot.reserved_phone || contextSlot?.reserved_phone
+    );
+
     const reservationPayload: any = {
       status: shouldCloseSlot ? "reserved" : "available",
       reserved_name: updatedLead.name || lead.name || "Candidato",
-      reserved_phone: updatedLead.phone || lead.phone || null,
+      reserved_phone: reservedWhatsappRecipient || null,
       reserved_email: updatedLead.email || lead.email || null,
       lead_id: updatedLead.id,
       reserved_at: new Date().toISOString(),
@@ -913,7 +924,7 @@ export async function POST(req: NextRequest) {
 
     const candidateResult = await safeSendWhatsapp({
       companyId: slot.company_id,
-      phone: leadWhatsappRecipient(updatedLead, slot.reserved_phone),
+      phone: slot.reserved_phone || leadWhatsappRecipient(updatedLead),
       message: candidateConfirmationMessage(slot, updatedLead),
     });
 
@@ -940,15 +951,6 @@ export async function POST(req: NextRequest) {
         phone: slot.recruiter_phone,
         message: recruiterConfirmationMessage(slot, updatedLead),
       });
-
-      if (!recruiterResult.sent) {
-        console.error("RECRUITER CONFIRMATION WHATSAPP NOT SENT:", {
-          slotId: slot.id,
-          recruiterName: slot.recruiter_name,
-          recruiterPhone: slot.recruiter_phone,
-          error: recruiterResult.error,
-        });
-      }
     }
 
     await supabase
