@@ -351,7 +351,7 @@ async function attachAttendeesToSlots(supabase: any, companyId: string, slots: a
           id: row.id,
           attendee_id: row.id,
           lead_id: row.lead_id || null,
-          candidate_id: null,
+          candidate_id: row.candidate_id || null,
           name: row.name || "Candidato",
           phone: row.phone || null,
           email: row.email || null,
@@ -642,7 +642,11 @@ async function createOrUpdateClientPresentationFromInterviewAction({
     job_id: jobId,
 
     lead_id: lead?.id || candidate?.lead_id || null,
-    candidate_id: candidate?.candidate_id || null,
+    candidate_id:
+      candidate?.candidate_id ||
+      lead?.candidate_id ||
+      slot?.candidate_id ||
+      null,
     attendee_id: candidate?.attendee_id || candidate?.id || null,
     interview_slot_id: slot?.id || null,
 
