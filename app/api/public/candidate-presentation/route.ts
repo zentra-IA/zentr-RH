@@ -107,7 +107,6 @@ async function attachCandidateResumes(
 
   const profiles = await prisma.candidateProfile.findMany({
     where: {
-      company_id: companyId,
       OR: orFilters,
     },
     select: {
@@ -151,6 +150,15 @@ async function attachCandidateResumes(
 
       return {
         ...candidate,
+        candidate_phone:
+          clean(candidate.candidate_phone) ||
+          clean(profile?.mobile) ||
+          clean(profile?.phone) ||
+          null,
+        candidate_email:
+          clean(candidate.candidate_email) ||
+          clean(profile?.email) ||
+          null,
         resume_file_url:
           clean(candidate.resume_file_url) ||
           clean(candidate.resume_url) ||

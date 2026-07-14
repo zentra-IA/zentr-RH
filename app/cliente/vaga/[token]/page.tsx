@@ -160,8 +160,29 @@ export default function PublicCandidatePresentationPage() {
               </div>
 
               <div className="info">
-                {candidate.candidate_phone && <span>WhatsApp: {candidate.candidate_phone}</span>}
-                {candidate.candidate_email && <span>E-mail: {candidate.candidate_email}</span>}
+                {candidate.candidate_phone ? (
+                  <a
+                    className="contact-link whatsapp"
+                    href={`https://wa.me/${candidate.candidate_phone.replace(/\D/g, "")}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    WhatsApp: {candidate.candidate_phone}
+                  </a>
+                ) : (
+                  <span className="missing-info">WhatsApp não informado</span>
+                )}
+
+                {candidate.candidate_email ? (
+                  <a
+                    className="contact-link email"
+                    href={`mailto:${candidate.candidate_email}`}
+                  >
+                    E-mail: {candidate.candidate_email}
+                  </a>
+                ) : (
+                  <span className="missing-info">E-mail não informado</span>
+                )}
                 <span>Entrevista RH: {formatDate(candidate.interview_at)}</span>
                 {candidate.resume_file_url ? (
                   <a
@@ -345,10 +366,33 @@ export default function PublicCandidatePresentationPage() {
         }
 
         .info a {
-          color: #2563eb;
           font-weight: 950;
         }
 
+        .contact-link {
+          display: inline-flex;
+          width: fit-content;
+          align-items: center;
+          gap: 6px;
+          padding: 7px 10px;
+          border-radius: 10px;
+          text-decoration: none;
+        }
+
+        .contact-link.whatsapp {
+          background: #dcfce7;
+          color: #166534;
+        }
+
+        .contact-link.email {
+          background: #eff6ff;
+          color: #1d4ed8;
+        }
+
+        .missing-info {
+          color: #94a3b8;
+          font-weight: 800;
+        }
 
         .resume-link {
           display: inline-flex;
