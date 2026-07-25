@@ -180,23 +180,51 @@ export default function FloatingInternalChat() {
     );
   }
 
-  useEffect(() => {
-    bootstrap();
-  }, []);
+useEffect(() => {
+  if (!open) return;
 
-  useEffect(() => {
-    if (!currentUser) return;
-    loadConversations();
-    const timer = window.setInterval(() => loadConversations(), 6000);
-    return () => window.clearInterval(timer);
-  }, [currentUser]);
+  bootstrap();
+}, [open]);
 
-  useEffect(() => {
-    if (!selectedConversation || !currentUser) return;
-    loadMessages(selectedConversation);
-    const timer = window.setInterval(() => loadMessages(selectedConversation), 3500);
-    return () => window.clearInterval(timer);
-  }, [selectedConversation?.id, currentUser]);
+useEffect(() => {
+  if (!open || !currentUser) return;
+
+  loadConversations();
+
+  const timer = window.setInterval(() => {
+    if (document.visibilityState === "visible") {
+      loadConversations();
+    }
+  }, 6000);
+
+  return () => window.clearInterval(timer);
+}, [open, currentUser]);
+
+useEffect(() => {
+  if (
+    !open ||
+    view !== "messages" ||
+    !selectedConversation ||
+    !currentUser
+  ) {
+    return;
+  }
+
+  loadMessages(selectedConversation);
+
+  const timer = window.setInterval(() => {
+    if (document.visibilityState === "visible") {
+      loadMessages(selectedConversation);
+    }
+  }, 3500);
+
+  return () => window.clearInterval(timer);
+}, [
+  open,
+  view,
+  selectedConversation?.id,
+  currentUser,
+]);
 
   async function openDirect(user: TeamUser) {
     const targetUserId = user.user_id || user.id;
