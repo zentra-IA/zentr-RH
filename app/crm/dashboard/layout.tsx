@@ -3,9 +3,10 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import FloatingTaskCenter from "@/components/tasks/FloatingTaskCenter";
 import FloatingInternalChat from "@/components/chat/FloatingInternalChat";
+import CommandCenterTracker from "./CommandCenterTracker";
 
 const MENU = [
   { label: "Clientes", href: "/crm/dashboard/clients", icon: "🏢" },
@@ -22,7 +23,7 @@ const MENU = [
   },
   { label: "Contratação", href: "/crm/dashboard/hirings", icon: "📄" },
   { label: "Tarefas", href: "/crm/dashboard/tasks", icon: "📋" },
-  { label: "BI", href: "/crm/dashboard/bi", icon: "📈" },
+  { label: "Centro de Comando", href: "/crm/dashboard/command-center", icon: "🛰️", adminOnly: true },
   { label: "Marketing IA", href: "/crm/dashboard/creative-generator", icon: "✨" },
   { label: "Criar mensagens", href: "/crm/dashboard/messages", icon: "✉️" },
   { label: "WhatsApp QR", href: "/crm/whatsapp", icon: "📲" },
@@ -36,6 +37,29 @@ function isActive(pathname: string, href: string) {
 export default function CrmDashboardLayout({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const [collapsed, setCollapsed] = useState(false);
+  const [currentRole, setCurrentRole] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+
+    fetch("/api/company/current", {
+      credentials: "include",
+      cache: "no-store",
+    })
+      .then((response) => response.json())
+      .then((payload) => {
+        if (active) {
+          setCurrentRole(payload?.currentUser?.role || null);
+        }
+      })
+      .catch(() => {
+        if (active) setCurrentRole(null);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   return (
     <div className={`crm-shell ${collapsed ? "sidebar-collapsed" : ""}`}>
@@ -61,22 +85,27 @@ export default function CrmDashboardLayout({ children }: { children: ReactNode }
         </div>
 
         <nav className="crm-nav">
-          {MENU.map((item) => {
-            const active = isActive(pathname, item.href);
+  {MENU.filter(
+    (item) =>
+      !("adminOnly" in item) ||
+      ["admin", "administrador"].includes(
+        String(currentRole || "").toLowerCase().trim()
+      )
+  ).map((item) => {
+    const active = isActive(pathname, item.href);
 
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                title={item.label}
-                className={`crm-nav-item ${active ? "active" : ""}`}
-              >
-                <span className="crm-nav-icon">{item.icon}</span>
-                <b className="crm-nav-label">{item.label}</b>
-              </Link>
-            );
-          })}
-        </nav>
+    return (
+      <Link
+        key={item.href}
+        href={item.href}
+        className={`crm-nav-item ${active ? "active" : ""}`}
+      >
+        <span className="crm-nav-icon">{item.icon}</span>
+        <span className="crm-nav-label">{item.label}</span>
+      </Link>
+    );
+  })}
+</nav>
 
         <div className="crm-footer-card">
           <div>🤖</div>
@@ -85,7 +114,13 @@ export default function CrmDashboardLayout({ children }: { children: ReactNode }
         </div>
       </aside>
 
-      <main className="crm-content">{children}</main>
+      <main className="crm-content">
+
+    <CommandCenterTracker />
+
+    {children}
+
+</main>
 
       <FloatingTaskCenter />
       <FloatingInternalChat />

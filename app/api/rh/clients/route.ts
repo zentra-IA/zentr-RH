@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { PrismaClient } from "@prisma/client";
 import { requireCompany } from "@/lib/server-company";
+import { emitOperationalEvent } from "@/lib/operational-events";
 
 export const dynamic = "force-dynamic";
 
@@ -123,7 +124,7 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const { companyId, branchId } = await requireCompany(req);
+    const { companyId, branchId, userId } = await requireCompany(req);
     const body = await req.json();
 
     const companyName = cleanText(body.companyName) || cleanText(body.name);
@@ -141,6 +142,47 @@ export async function POST(req: NextRequest) {
       data: payload,
     });
 
+    await emitOperationalEvent(
+      {
+        companyId,
+        branchId,
+        userId,
+        module: "clientes",
+        action: "client_created",
+        entityType: "company_contacts",
+        entityId: client.id,
+        entityName:
+          client.company_name ||
+          client.restaurant_name ||
+          companyName,
+        description: `Criou o cliente ${
+          client.company_name ||
+          client.restaurant_name ||
+          companyName
+        }`,
+        after: client as unknown as Record<string, unknown>,
+        metadata: {
+          responsibleName:
+            client.responsible_name ||
+            client.owner_name ||
+            null,
+          phone:
+            client.whatsapp ||
+            client.phone ||
+            null,
+          email: client.email || null,
+          city: client.city || null,
+          state: client.state || null,
+          cnpj:
+            client.cnpj ||
+            client.document ||
+            null,
+        },
+        eventKey: `client-created:${client.id}`,
+      },
+      req
+    );
+
     return NextResponse.json({
       success: true,
       client: normalizeClient(client),
@@ -157,7 +199,7 @@ export async function POST(req: NextRequest) {
 
 export async function PATCH(req: NextRequest) {
   try {
-    const { companyId, branchId } = await requireCompany(req);
+    const { companyId, branchId, userId } = await requireCompany(req);
     const body = await req.json();
 
     const id = cleanText(body.id);
@@ -211,6 +253,59 @@ export async function PATCH(req: NextRequest) {
       );
     }
 
+    await emitOperationalEvent(
+      {
+        companyId,
+        branchId:
+          branchId ||
+          existingClient.branch_id ||
+          null,
+        userId,
+        module: "clientes",
+        action: "client_updated",
+        entityType: "company_contacts",
+        entityId: client.id,
+        entityName:
+          client.company_name ||
+          client.restaurant_name ||
+          "Cliente",
+        description: `Atualizou o cliente ${
+          client.company_name ||
+          client.restaurant_name ||
+          "Cliente"
+        }`,
+        before:
+          existingClient as unknown as Record<
+            string,
+            unknown
+          >,
+        after:
+          client as unknown as Record<
+            string,
+            unknown
+          >,
+        metadata: {
+          responsibleName:
+            client.responsible_name ||
+            client.owner_name ||
+            null,
+          phone:
+            client.whatsapp ||
+            client.phone ||
+            null,
+          email: client.email || null,
+          city: client.city || null,
+          state: client.state || null,
+          cnpj:
+            client.cnpj ||
+            client.document ||
+            null,
+        },
+        eventKey: `client-updated:${client.id}:${Date.now()}`,
+      },
+      req
+    );
+
     return NextResponse.json({
       success: true,
       client: normalizeClient(client),
@@ -227,7 +322,8 @@ export async function PATCH(req: NextRequest) {
 
 export async function DELETE(req: NextRequest) {
   try {
-    const { companyId } = await requireCompany(req);
+    const { companyId, branchId, userId } =
+      await requireCompany(req);
     const { searchParams } = new URL(req.url);
     const id = searchParams.get("id");
 
@@ -262,6 +358,54 @@ export async function DELETE(req: NextRequest) {
         { status: 404 }
       );
     }
+
+    await emitOperationalEvent(
+      {
+        companyId,
+        branchId:
+          branchId ||
+          existingClient.branch_id ||
+          null,
+        userId,
+        module: "clientes",
+        action: "client_deleted",
+        entityType: "company_contacts",
+        entityId: existingClient.id,
+        entityName:
+          existingClient.company_name ||
+          existingClient.restaurant_name ||
+          "Cliente",
+        description: `Excluiu o cliente ${
+          existingClient.company_name ||
+          existingClient.restaurant_name ||
+          "Cliente"
+        }`,
+        before:
+          existingClient as unknown as Record<
+            string,
+            unknown
+          >,
+        metadata: {
+          responsibleName:
+            existingClient.responsible_name ||
+            existingClient.owner_name ||
+            null,
+          phone:
+            existingClient.whatsapp ||
+            existingClient.phone ||
+            null,
+          email: existingClient.email || null,
+          city: existingClient.city || null,
+          state: existingClient.state || null,
+          cnpj:
+            existingClient.cnpj ||
+            existingClient.document ||
+            null,
+        },
+        eventKey: `client-deleted:${existingClient.id}`,
+      },
+      req
+    );
 
     return NextResponse.json({ success: true });
   } catch (error: any) {

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { emitOperationalEvent } from "@/lib/operational-events";
 
 export const dynamic = "force-dynamic";
 
@@ -200,6 +201,40 @@ export async function POST(req: NextRequest) {
       });
     }
 
+    await emitOperationalEvent(
+      {
+        companyId,
+        branchId: payload.branch_id,
+        userId: currentUser.id || null,
+        module: "tarefas",
+        action: "task_created",
+        entityType: "rh_tasks",
+        entityId: task.id,
+        entityName: task.title,
+        description: payload.assigned_to_name
+          ? `Criou a tarefa ${task.title} para ${payload.assigned_to_name}`
+          : `Criou a tarefa ${task.title}`,
+        status: task.status,
+        responsibleUserId: payload.assigned_to,
+        responsibleName: payload.assigned_to_name,
+        after: task as Record<string, unknown>,
+        metadata: {
+          priority: task.priority,
+          dueDate: task.due_date,
+          relatedType: task.related_type,
+          sourceType: task.source_type,
+          jobId: task.job_id,
+          candidateId: task.candidate_id,
+          clientId: task.client_id,
+          hiringId: task.hiring_id,
+          checklistItems: checklistItems.length,
+          createdByName: payload.created_by_name,
+        },
+        eventKey: `task-created:${task.id}`,
+      },
+      req
+    );
+
     return NextResponse.json({ success: true, task });
   } catch (error: any) {
     return NextResponse.json(
@@ -221,6 +256,25 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json(
         { success: false, error: "Empresa e tarefa são obrigatórias." },
         { status: 400 }
+      );
+    }
+
+    const { data: existingTask, error: existingTaskError } =
+      await supabase
+        .from("rh_tasks")
+        .select("*")
+        .eq("id", id)
+        .eq("company_id", companyId)
+        .maybeSingle();
+
+    if (existingTaskError) {
+      throw new Error(existingTaskError.message);
+    }
+
+    if (!existingTask) {
+      return NextResponse.json(
+        { success: false, error: "Tarefa não encontrada." },
+        { status: 404 }
       );
     }
 
@@ -276,6 +330,131 @@ export async function PATCH(req: NextRequest) {
         .eq("company_id", companyId);
     }
 
+    const currentUser = getCurrentUser(req);
+
+    const assignmentChanged =
+      existingTask.assigned_to !== task.assigned_to;
+
+    if (
+      assignmentChanged &&
+      task.assigned_to
+    ) {
+      await supabase.from("rh_task_notifications").insert({
+        company_id: companyId,
+        user_id: task.assigned_to,
+        task_id: task.id,
+        title: existingTask.assigned_to
+          ? "Tarefa reatribuída"
+          : "Nova tarefa atribuída",
+        message: task.title,
+      });
+    }
+
+    const statusChanged =
+      existingTask.status !== task.status;
+    const priorityChanged =
+      existingTask.priority !== task.priority;
+    const dueDateChanged =
+      existingTask.due_date !== task.due_date;
+
+    const eventAction =
+      body.comment
+        ? "task_commented"
+        : body.checklistItemId
+        ? "task_checklist_updated"
+        : assignmentChanged
+        ? existingTask.assigned_to
+          ? "task_reassigned"
+          : "task_assigned"
+        : statusChanged
+        ? task.status === "done"
+          ? "task_completed"
+          : task.status === "doing"
+          ? "task_started"
+          : task.status === "waiting"
+          ? "task_waiting"
+          : "task_status_changed"
+        : priorityChanged
+        ? "task_priority_changed"
+        : dueDateChanged
+        ? "task_due_date_changed"
+        : "task_updated";
+
+    const eventDescription =
+      body.comment
+        ? `Comentou na tarefa ${task.title}`
+        : body.checklistItemId
+        ? `Atualizou o checklist da tarefa ${task.title}`
+        : assignmentChanged
+        ? task.assigned_to_name
+          ? `${
+              existingTask.assigned_to
+                ? "Reatribuiu"
+                : "Atribuiu"
+            } a tarefa ${task.title} para ${task.assigned_to_name}`
+          : `Alterou o responsável da tarefa ${task.title}`
+        : statusChanged
+        ? `Alterou a tarefa ${task.title} de ${existingTask.status} para ${task.status}`
+        : priorityChanged
+        ? `Alterou a prioridade da tarefa ${task.title} de ${existingTask.priority} para ${task.priority}`
+        : dueDateChanged
+        ? `Alterou o prazo da tarefa ${task.title}`
+        : `Atualizou a tarefa ${task.title}`;
+
+    await emitOperationalEvent(
+      {
+        companyId,
+        branchId: task.branch_id || null,
+        userId: currentUser.id || null,
+        module: "tarefas",
+        action: eventAction,
+        entityType: "rh_tasks",
+        entityId: task.id,
+        entityName: task.title,
+        description: eventDescription,
+        status: task.status,
+        responsibleUserId: task.assigned_to,
+        responsibleName: task.assigned_to_name,
+        before: existingTask as Record<string, unknown>,
+        after: task as Record<string, unknown>,
+        metadata: {
+          previousStatus: existingTask.status,
+          currentStatus: task.status,
+          previousPriority: existingTask.priority,
+          currentPriority: task.priority,
+          previousDueDate: existingTask.due_date,
+          currentDueDate: task.due_date,
+          previousAssignedTo: existingTask.assigned_to,
+          currentAssignedTo: task.assigned_to,
+          previousAssignedToName:
+            existingTask.assigned_to_name,
+          currentAssignedToName:
+            task.assigned_to_name,
+          priority: task.priority,
+          dueDate: task.due_date,
+          relatedType: task.related_type,
+          sourceType: task.source_type,
+          jobId: task.job_id,
+          candidateId: task.candidate_id,
+          clientId: task.client_id,
+          hiringId: task.hiring_id,
+          comment: body.comment
+            ? cleanString(body.comment)
+            : null,
+          checklistItemId: body.checklistItemId
+            ? cleanString(body.checklistItemId)
+            : null,
+          checklistDone:
+            body.checklistItemId
+              ? Boolean(body.checklistDone)
+              : null,
+          updatedByName: currentUser.name || null,
+        },
+        eventKey: `task-${eventAction}:${task.id}:${Date.now()}`,
+      },
+      req
+    );
+
     return NextResponse.json({ success: true, task });
   } catch (error: any) {
     return NextResponse.json(
@@ -300,6 +479,25 @@ export async function DELETE(req: NextRequest) {
       );
     }
 
+    const { data: existingTask, error: existingTaskError } =
+      await supabase
+        .from("rh_tasks")
+        .select("*")
+        .eq("id", id)
+        .eq("company_id", companyId)
+        .maybeSingle();
+
+    if (existingTaskError) {
+      throw new Error(existingTaskError.message);
+    }
+
+    if (!existingTask) {
+      return NextResponse.json(
+        { success: false, error: "Tarefa não encontrada." },
+        { status: 404 }
+      );
+    }
+
     const { error } = await supabase
       .from("rh_tasks")
       .delete()
@@ -307,6 +505,42 @@ export async function DELETE(req: NextRequest) {
       .eq("company_id", companyId);
 
     if (error) throw new Error(error.message);
+
+    const currentUser = getCurrentUser(req);
+
+    await emitOperationalEvent(
+      {
+        companyId,
+        branchId: existingTask.branch_id || null,
+        userId: currentUser.id || null,
+        module: "tarefas",
+        action: "task_deleted",
+        entityType: "rh_tasks",
+        entityId: existingTask.id,
+        entityName: existingTask.title,
+        description: `Excluiu a tarefa ${existingTask.title}`,
+        status: existingTask.status,
+        responsibleUserId:
+          existingTask.assigned_to || null,
+        responsibleName:
+          existingTask.assigned_to_name || null,
+        before:
+          existingTask as Record<string, unknown>,
+        metadata: {
+          priority: existingTask.priority,
+          dueDate: existingTask.due_date,
+          relatedType: existingTask.related_type,
+          sourceType: existingTask.source_type,
+          jobId: existingTask.job_id,
+          candidateId: existingTask.candidate_id,
+          clientId: existingTask.client_id,
+          hiringId: existingTask.hiring_id,
+          deletedByName: currentUser.name || null,
+        },
+        eventKey: `task-deleted:${existingTask.id}`,
+      },
+      req
+    );
 
     return NextResponse.json({ success: true });
   } catch (error: any) {

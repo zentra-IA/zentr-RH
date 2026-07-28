@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { PrismaClient } from "@prisma/client";
 import { requireCompany } from "@/lib/server-company";
+import { emitOperationalEvent } from "@/lib/operational-events";
 
 export const dynamic = "force-dynamic";
 
@@ -266,7 +267,7 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const { companyId, branchId } = await requireCompany(req);
+    const { companyId, branchId, userId } = await requireCompany(req);
     const body = await req.json();
 
     const duplicateFromId = cleanText(body.duplicateFromId);
@@ -327,6 +328,74 @@ export async function POST(req: NextRequest) {
         data: duplicatedPayload,
       });
 
+      await emitOperationalEvent(
+        {
+          companyId,
+          branchId:
+            branchId ||
+            sourceJob.branch_id ||
+            null,
+          userId,
+          module: "vagas",
+          action: "job_duplicated",
+          entityType: "Job",
+          entityId: duplicatedJob.id,
+          entityName: duplicatedJob.title,
+          description: `Duplicou a vaga ${sourceJob.title} como ${duplicatedJob.title}`,
+          status: duplicatedJob.status,
+          responsibleUserId:
+            cleanText(
+              (duplicatedJob.requirements as any)?.responsibleUserId
+            ) || null,
+          responsibleName:
+            cleanText(
+              (duplicatedJob.requirements as any)?.responsibleName
+            ) || null,
+          after:
+            duplicatedJob as unknown as Record<
+              string,
+              unknown
+            >,
+          metadata: {
+            sourceJobId: sourceJob.id,
+            sourceJobTitle: sourceJob.title,
+            clientId:
+              cleanText(
+                (duplicatedJob.requirements as any)?.clientId
+              ) || null,
+            clientName:
+              cleanText(
+                (duplicatedJob.requirements as any)?.clientName
+              ) || null,
+            openings:
+              (duplicatedJob.requirements as any)?.openings ??
+              null,
+            priority:
+              cleanText(
+                (duplicatedJob.requirements as any)?.priority
+              ) || null,
+            city:
+              cleanText(
+                (duplicatedJob.filters as any)?.city
+              ) || null,
+            state:
+              cleanText(
+                (duplicatedJob.filters as any)?.state
+              ) || null,
+            contractType:
+              cleanText(
+                (duplicatedJob.filters as any)?.contractType
+              ) || null,
+            workMode:
+              cleanText(
+                (duplicatedJob.filters as any)?.workMode
+              ) || null,
+          },
+          eventKey: `job-duplicated:${duplicatedJob.id}`,
+        },
+        req
+      );
+
       return NextResponse.json(
         {
           success: true,
@@ -352,6 +421,82 @@ export async function POST(req: NextRequest) {
       data: payload,
     });
 
+    await emitOperationalEvent(
+      {
+        companyId,
+        branchId,
+        userId,
+        module: "vagas",
+        action: "job_created",
+        entityType: "Job",
+        entityId: job.id,
+        entityName: job.title,
+        description: `Criou a vaga ${job.title}`,
+        status: job.status,
+        responsibleUserId:
+          cleanText(
+            (job.requirements as any)?.responsibleUserId
+          ) || null,
+        responsibleName:
+          cleanText(
+            (job.requirements as any)?.responsibleName
+          ) || null,
+        after:
+          job as unknown as Record<string, unknown>,
+        metadata: {
+          clientId:
+            cleanText(
+              (job.requirements as any)?.clientId
+            ) || null,
+          clientName:
+            cleanText(
+              (job.requirements as any)?.clientName
+            ) || null,
+          openings:
+            (job.requirements as any)?.openings ??
+            null,
+          priority:
+            cleanText(
+              (job.requirements as any)?.priority
+            ) || null,
+          startDate:
+            cleanText(
+              (job.requirements as any)?.startDate
+            ) || null,
+          dueDate:
+            cleanText(
+              (job.requirements as any)?.dueDate
+            ) || null,
+          city:
+            cleanText(
+              (job.filters as any)?.city
+            ) || null,
+          state:
+            cleanText(
+              (job.filters as any)?.state
+            ) || null,
+          contractType:
+            cleanText(
+              (job.filters as any)?.contractType
+            ) || null,
+          workMode:
+            cleanText(
+              (job.filters as any)?.workMode
+            ) || null,
+          salaryMin:
+            (job as any).salaryMin ??
+            (job as any).salary_min ??
+            null,
+          salaryMax:
+            (job as any).salaryMax ??
+            (job as any).salary_max ??
+            null,
+        },
+        eventKey: `job-created:${job.id}`,
+      },
+      req
+    );
+
     return NextResponse.json(
       {
         success: true,
@@ -371,7 +516,7 @@ export async function POST(req: NextRequest) {
 
 export async function PATCH(req: NextRequest) {
   try {
-    const { companyId, branchId } = await requireCompany(req);
+    const { companyId, branchId, userId } = await requireCompany(req);
     const body = await req.json();
 
     const id = cleanText(body.id);
@@ -455,6 +600,109 @@ export async function PATCH(req: NextRequest) {
       );
     }
 
+    const eventAction =
+      existingJob.status !== job.status
+        ? job.status === "open" ||
+          job.status === "published"
+          ? "job_published"
+          : job.status === "paused"
+          ? "job_paused"
+          : job.status === "closed"
+          ? "job_closed"
+          : job.status === "draft"
+          ? "job_moved_to_draft"
+          : "job_status_changed"
+        : "job_updated";
+
+    await emitOperationalEvent(
+      {
+        companyId,
+        branchId:
+          branchId ||
+          existingJob.branch_id ||
+          null,
+        userId,
+        module: "vagas",
+        action: eventAction,
+        entityType: "Job",
+        entityId: job.id,
+        entityName: job.title,
+        description:
+          existingJob.status !== job.status
+            ? `Alterou a vaga ${job.title} de ${existingJob.status} para ${job.status}`
+            : `Atualizou a vaga ${job.title}`,
+        status: job.status,
+        responsibleUserId:
+          cleanText(
+            (job.requirements as any)?.responsibleUserId
+          ) || null,
+        responsibleName:
+          cleanText(
+            (job.requirements as any)?.responsibleName
+          ) || null,
+        before:
+          existingJob as unknown as Record<
+            string,
+            unknown
+          >,
+        after:
+          job as unknown as Record<string, unknown>,
+        metadata: {
+          previousStatus: existingJob.status,
+          currentStatus: job.status,
+          clientId:
+            cleanText(
+              (job.requirements as any)?.clientId
+            ) || null,
+          clientName:
+            cleanText(
+              (job.requirements as any)?.clientName
+            ) || null,
+          openings:
+            (job.requirements as any)?.openings ??
+            null,
+          priority:
+            cleanText(
+              (job.requirements as any)?.priority
+            ) || null,
+          startDate:
+            cleanText(
+              (job.requirements as any)?.startDate
+            ) || null,
+          dueDate:
+            cleanText(
+              (job.requirements as any)?.dueDate
+            ) || null,
+          city:
+            cleanText(
+              (job.filters as any)?.city
+            ) || null,
+          state:
+            cleanText(
+              (job.filters as any)?.state
+            ) || null,
+          contractType:
+            cleanText(
+              (job.filters as any)?.contractType
+            ) || null,
+          workMode:
+            cleanText(
+              (job.filters as any)?.workMode
+            ) || null,
+          salaryMin:
+            (job as any).salaryMin ??
+            (job as any).salary_min ??
+            null,
+          salaryMax:
+            (job as any).salaryMax ??
+            (job as any).salary_max ??
+            null,
+        },
+        eventKey: `job-updated:${job.id}:${Date.now()}`,
+      },
+      req
+    );
+
     return NextResponse.json({
       success: true,
       job,
@@ -471,7 +719,8 @@ export async function PATCH(req: NextRequest) {
 
 export async function DELETE(req: NextRequest) {
   try {
-    const { companyId } = await requireCompany(req);
+    const { companyId, branchId, userId } =
+      await requireCompany(req);
 
     const { searchParams } = new URL(req.url);
     const id = searchParams.get("id");
@@ -507,6 +756,60 @@ export async function DELETE(req: NextRequest) {
         { status: 404 }
       );
     }
+
+    await emitOperationalEvent(
+      {
+        companyId,
+        branchId:
+          branchId ||
+          existingJob.branch_id ||
+          null,
+        userId,
+        module: "vagas",
+        action: "job_deleted",
+        entityType: "Job",
+        entityId: existingJob.id,
+        entityName: existingJob.title,
+        description: `Excluiu a vaga ${existingJob.title}`,
+        status: existingJob.status,
+        responsibleUserId:
+          cleanText(
+            (existingJob.requirements as any)?.responsibleUserId
+          ) || null,
+        responsibleName:
+          cleanText(
+            (existingJob.requirements as any)?.responsibleName
+          ) || null,
+        before:
+          existingJob as unknown as Record<
+            string,
+            unknown
+          >,
+        metadata: {
+          clientId:
+            cleanText(
+              (existingJob.requirements as any)?.clientId
+            ) || null,
+          clientName:
+            cleanText(
+              (existingJob.requirements as any)?.clientName
+            ) || null,
+          openings:
+            (existingJob.requirements as any)?.openings ??
+            null,
+          city:
+            cleanText(
+              (existingJob.filters as any)?.city
+            ) || null,
+          state:
+            cleanText(
+              (existingJob.filters as any)?.state
+            ) || null,
+        },
+        eventKey: `job-deleted:${existingJob.id}`,
+      },
+      req
+    );
 
     return NextResponse.json({
       success: true,
