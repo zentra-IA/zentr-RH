@@ -375,9 +375,15 @@ export async function GET(req: NextRequest) {
       clean(presentation.company_id)
     );
 
+    const publicPresentation = presentationWithResume || presentation;
+
+    publicPresentation.candidates = (publicPresentation.candidates || []).filter(
+      (candidate: any) => clean(candidate?.status) === "waiting_client"
+    );
+
     return NextResponse.json({
       success: true,
-      presentation: presentationWithResume || presentation,
+      presentation: publicPresentation,
     });
   } catch (error: any) {
     console.error("GET /api/public/candidate-presentation:", error);

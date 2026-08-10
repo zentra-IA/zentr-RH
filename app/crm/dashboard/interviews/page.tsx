@@ -129,6 +129,21 @@ function getConfirmedCount(slot: any) {
   return attendees.length || (slot.reserved_name ? 1 : 0);
 }
 
+function candidateDecisionKey(person: any) {
+  return String(
+    person?.attendee_id ||
+      person?.attendeeId ||
+      person?.id ||
+      person?.lead_id ||
+      person?.leadId ||
+      person?.candidate_id ||
+      person?.candidateId ||
+      person?.phone ||
+      person?.email ||
+      ""
+  );
+}
+
 export default function AvailabilityPage() {
   const [slots, setSlots] = useState<any[]>([]);
   const [jobs, setJobs] = useState<any[]>([]);
@@ -175,6 +190,9 @@ export default function AvailabilityPage() {
   });
 
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [decisionNotes, setDecisionNotes] = useState<Record<string, string>>({});
+  const [candidateAttachments, setCandidateAttachments] = useState<Record<string, any[]>>({});
+  const [uploadingFor, setUploadingFor] = useState<string | null>(null);
 
   async function loadJobs() {
     try {
@@ -490,26 +508,111 @@ export default function AvailabilityPage() {
     await loadSlots();
   }
 
+  async function uploadCandidateAttachment(person: any, file: File) {
+    const key = candidateDecisionKey(person);
+    if (!key || !file) return;
+
+    const form = new FormData();
+    form.append("file", file);
+    form.append("folder", "interview-client-files");
+
+    setUploadingFor(key);
+    try {
+      const res = await fetch("/api/upload", {
+        method: "POST",
+        credentials: "include",
+        body: form,
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const message = [
+          data.error,
+          data.details,
+        ]
+          .filter(Boolean)
+          .join("\n\n");
+
+        alert(message || "Erro ao enviar arquivo.");
+        return;
+      }
+
+      const attachment = {
+        name: data.name || file.name,
+        url: data.fileUrl || data.url || data.mediaUrl,
+        mediaType: data.mediaType || "file",
+        mimeType: data.mimeType || file.type || null,
+        size: data.size || file.size || null,
+      };
+
+      setCandidateAttachments((current) => {
+        const existingAttachments =
+          current[key] ??
+          (Array.isArray(person?.attachments) ? person.attachments : []);
+
+        return {
+          ...current,
+          [key]: [...existingAttachments, attachment],
+        };
+      });
+    } finally {
+      setUploadingFor(null);
+    }
+  }
+
+  function removeCandidateAttachment(person: any, index: number) {
+    const key = candidateDecisionKey(person);
+
+    setCandidateAttachments((current) => {
+      const existingAttachments =
+        current[key] ??
+        (Array.isArray(person?.attachments) ? person.attachments : []);
+
+      return {
+        ...current,
+        [key]: existingAttachments.filter(
+          (_, itemIndex) => itemIndex !== index
+        ),
+      };
+    });
+  }
+
   async function updateCandidateStatus(slot: any, person: any, status: string) {
+    const noteKey = candidateDecisionKey(person);
+    const rhNotes = String(
+      decisionNotes[noteKey] ?? person?.rh_notes ?? ""
+    ).trim();
+    const attachments =
+      candidateAttachments[noteKey] ??
+      (Array.isArray(person?.attachments) ? person.attachments : []);
+
     const confirmText: Record<string, string> = {
       confirmed: `Confirmar presença de ${person?.name || "este candidato"}?`,
       approved: `Aprovar ${person?.name || "este candidato"}?`,
-rejected: `Marcar ${person?.name || "este candidato"} como não aprovado?`,
+      rejected: `Marcar ${person?.name || "este candidato"} como não aprovado?`,
       no_show: `Marcar ${person?.name || "este candidato"} como não compareceu?`,
       reschedule: `Reagendar ${person?.name || "este candidato"}?`,
     };
 
     if (!confirm(confirmText[status] || "Atualizar candidato?")) return;
 
-    const rawInterviewId = person?.interview_id || person?.interviewId || person?.rh_interview_id || null;
-    const rawPersonId = person?.id || null;
-    const attendeeId = person?.attendee_id || person?.attendeeId || (person?.source === "rh_shared_interview_attendees" ? person?.id : null);
+    const rawInterviewId =
+      person?.interview_id ||
+      person?.interviewId ||
+      person?.rh_interview_id ||
+      null;
 
-    // Nunca envie ids artificiais como "slot-..." como se fossem entrevista.
-    // Isso era o que fazia a API responder "Entrevista não encontrada".
+    const rawPersonId = person?.id || null;
+
+    const attendeeId =
+      person?.attendee_id ||
+      person?.attendeeId ||
+      (person?.source === "rh_shared_interview_attendees" ? person?.id : null);
+
     const isUuid = (value: any) =>
       typeof value === "string" &&
-      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+        value
+      );
 
     const interviewId = isUuid(rawInterviewId)
       ? rawInterviewId
@@ -522,11 +625,14 @@ rejected: `Marcar ${person?.name || "este candidato"} como não aprovado?`,
         ? person.lead_id
         : isUuid(person?.leadId)
           ? person.leadId
-          : isUuid(person?.candidate_id)
-            ? person.candidate_id
-            : isUuid(person?.candidateId)
-              ? person.candidateId
-              : null;
+          : null;
+
+    const candidateId =
+      isUuid(person?.candidate_id)
+        ? person.candidate_id
+        : isUuid(person?.candidateId)
+          ? person.candidateId
+          : null;
 
     if (status === "reschedule") {
       const res = await fetch("/api/rh/interviews/availability", {
@@ -540,6 +646,7 @@ rejected: `Marcar ${person?.name || "este candidato"} como não aprovado?`,
           status: getSlotAgendaType(slot) === "shared" ? slot.status : "available",
           clearReservation: getSlotAgendaType(slot) !== "shared",
           leadId,
+          candidateId,
           interviewId,
           attendeeId,
           candidatePhone: person?.phone || null,
@@ -558,8 +665,16 @@ rejected: `Marcar ${person?.name || "este candidato"} como não aprovado?`,
       return;
     }
 
-    if (!interviewId && !leadId && !person?.phone && !person?.email) {
-      alert("Não encontrei os dados deste candidato para atualizar. Recarregue a página e tente novamente.");
+    if (
+      !interviewId &&
+      !leadId &&
+      !candidateId &&
+      !person?.phone &&
+      !person?.email
+    ) {
+      alert(
+        "Não encontrei os dados deste candidato para atualizar. Recarregue a página e tente novamente."
+      );
       return;
     }
 
@@ -575,7 +690,10 @@ rejected: `Marcar ${person?.name || "este candidato"} como não aprovado?`,
         interviewId,
         attendeeId,
         leadId,
+        candidateId,
         status,
+        rhNotes: rhNotes || null,
+        attachments,
         candidatePhone: person?.phone || null,
         candidateEmail: person?.email || null,
       }),
@@ -588,8 +706,17 @@ rejected: `Marcar ${person?.name || "este candidato"} como não aprovado?`,
       return;
     }
 
+    if (noteKey) {
+      setDecisionNotes((current) => {
+        const next = { ...current };
+        delete next[noteKey];
+        return next;
+      });
+    }
+
     if (status === "approved") {
       const link = data?.clientPresentation?.clientLink;
+
       if (link) {
         const shouldCopy = confirm(
           `Candidato enviado para Apresentação ao Cliente.\n\nLink da vaga:\n${link}\n\nDeseja copiar o link agora?`
@@ -1076,6 +1203,135 @@ rejected: `Marcar ${person?.name || "este candidato"} como não aprovado?`,
                             {personStatus && (
                               <small style={styles.smallText}>Status: {statusLabel(personStatus)}</small>
                             )}
+                          </div>
+
+                          <div
+                            style={{
+                              display: "grid",
+                              gap: 7,
+                              width: "100%",
+                            }}
+                          >
+                            <label
+                              style={{
+                                fontSize: 12,
+                                fontWeight: 800,
+                                color: "#334155",
+                              }}
+                            >
+                              Observação da entrevista
+                            </label>
+
+                            <textarea
+                              style={{
+                                ...styles.input,
+                                minHeight: 76,
+                                resize: "vertical",
+                              }}
+                              disabled={false}
+                              placeholder="Observação opcional para o cliente sobre este candidato."
+                              value={
+                                decisionNotes[candidateDecisionKey(person)] ??
+                                person?.rh_notes ??
+                                ""
+                              }
+                              onChange={(event) => {
+                                const key = candidateDecisionKey(person);
+                                setDecisionNotes((current) => ({
+                                  ...current,
+                                  [key]: event.target.value,
+                                }));
+                              }}
+                            />
+
+                            <div
+                              style={{
+                                display: "flex",
+                                gap: 8,
+                                alignItems: "center",
+                                flexWrap: "wrap",
+                              }}
+                            >
+                              <label
+                                style={{
+                                  ...styles.secondarySmallButton,
+                                  cursor: uploadingFor === candidateDecisionKey(person) ? "wait" : "pointer",
+                                  display: "inline-flex",
+                                  alignItems: "center",
+                                  gap: 6,
+                                }}
+                              >
+                                {uploadingFor === candidateDecisionKey(person)
+                                  ? "Enviando..."
+                                  : "+ Anexar PDF, foto ou áudio"}
+                                <input
+                                  type="file"
+                                  hidden
+                                  disabled={
+                                    uploadingFor === candidateDecisionKey(person)
+                                  }
+                                  accept=".pdf,.jpg,.jpeg,.png,.webp,.gif,.mp3,.ogg,.oga,.wav,.m4a,.aac"
+                                  onChange={async (event) => {
+                                    const input = event.currentTarget;
+                                    const file = input.files?.[0];
+
+                                    try {
+                                      if (file) {
+                                        await uploadCandidateAttachment(person, file);
+                                      }
+                                    } finally {
+                                      input.value = "";
+                                    }
+                                  }}
+                                />
+                              </label>
+                              <small style={styles.smallText}>
+                                PDF, foto ou áudio. Você pode anexar mesmo após aprovar; depois clique em Aprovar novamente para atualizar a apresentação do cliente.
+                              </small>
+                            </div>
+
+                            {(candidateAttachments[candidateDecisionKey(person)] ||
+                              person?.attachments ||
+                              []).map((attachment: any, attachmentIndex: number) => (
+                              <div
+                                key={`${attachment.url || attachment.name}-${attachmentIndex}`}
+                                style={{
+                                  display: "flex",
+                                  justifyContent: "space-between",
+                                  alignItems: "center",
+                                  gap: 10,
+                                  padding: "8px 10px",
+                                  border: "1px solid #e2e8f0",
+                                  borderRadius: 10,
+                                  background: "#f8fafc",
+                                }}
+                              >
+                                <a
+                                  href={attachment.url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  style={{ fontSize: 12, fontWeight: 800 }}
+                                >
+                                  {attachment.name || "Abrir anexo"}
+                                </a>
+                                <button
+                                    type="button"
+                                    style={styles.dangerSmallButton}
+                                    onClick={() =>
+                                      removeCandidateAttachment(person, attachmentIndex)
+                                    }
+                                  >
+                                    Remover
+                                  </button>
+                              </div>
+                            ))}
+
+                            {["approved", "rejected"].includes(personStatus) &&
+                              person?.rh_notes && (
+                                <small style={styles.smallText}>
+                                  Observação registrada. Você pode editar e aprovar novamente para atualizar o cliente.
+                                </small>
+                              )}
                           </div>
 
                           <div style={styles.attendeeActions}>
