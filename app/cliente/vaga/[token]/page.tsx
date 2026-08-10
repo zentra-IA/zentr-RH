@@ -12,6 +12,13 @@ type Candidate = {
   resume_file_url?: string | null;
   interview_at?: string | null;
   rh_notes?: string | null;
+  attachments?: Array<{
+    name?: string | null;
+    url: string;
+    mediaType?: string | null;
+    mimeType?: string | null;
+    size?: number | null;
+  }>;
   client_notes?: string | null;
   status: string;
 };
@@ -56,7 +63,13 @@ export default function PublicCandidatePresentationPage() {
   const [notes, setNotes] = useState<Record<string, string>>({});
   const [error, setError] = useState("");
 
-  const candidates = useMemo(() => presentation?.candidates || [], [presentation]);
+  const candidates = useMemo(
+    () =>
+      (presentation?.candidates || []).filter(
+        (candidate) => candidate.status === "waiting_client"
+      ),
+    [presentation]
+  );
 
   async function loadPresentation() {
     if (!token) {
@@ -139,7 +152,9 @@ export default function PublicCandidatePresentationPage() {
       {!loading && error && <div className="error">{error}</div>}
 
       {!loading && !error && candidates.length === 0 && (
-        <div className="empty">Nenhum candidato disponível neste link.</div>
+        <div className="empty">
+          Todos os candidatos deste link já foram avaliados ou não há candidatos pendentes.
+        </div>
       )}
 
       <section className="grid">
@@ -206,6 +221,54 @@ export default function PublicCandidatePresentationPage() {
                   <p>{candidate.rh_notes}</p>
                 </div>
               )}
+
+              {Array.isArray(candidate.attachments) &&
+                candidate.attachments.length > 0 && (
+                  <div className="notes">
+                    <strong>Arquivos enviados pelo RH</strong>
+                    <div style={{ display: "grid", gap: 10, marginTop: 10 }}>
+                      {candidate.attachments.map((attachment, index) => {
+                        const type = attachment.mediaType || "";
+                        return (
+                          <div key={`${attachment.url}-${index}`}>
+                            {type === "image" ? (
+                              <a href={attachment.url} target="_blank" rel="noopener noreferrer">
+                                <img
+                                  src={attachment.url}
+                                  alt={attachment.name || "Imagem enviada pelo RH"}
+                                  style={{
+                                    width: "100%",
+                                    maxWidth: 420,
+                                    maxHeight: 260,
+                                    objectFit: "contain",
+                                    borderRadius: 10,
+                                    border: "1px solid #e5e7eb",
+                                  }}
+                                />
+                              </a>
+                            ) : type === "audio" ? (
+                              <div>
+                                <div style={{ marginBottom: 6 }}>
+                                  {attachment.name || "Áudio do RH"}
+                                </div>
+                                <audio controls src={attachment.url} style={{ width: "100%" }} />
+                              </div>
+                            ) : (
+                              <a
+                                className="resume-link"
+                                href={attachment.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                              >
+                                {attachment.name || "Abrir arquivo"}
+                              </a>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
 
               <textarea
                 disabled={decided}

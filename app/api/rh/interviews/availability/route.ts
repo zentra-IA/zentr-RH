@@ -307,6 +307,7 @@ function fallbackAttendeeFromSlot(slot: any) {
     phone: slot.reserved_phone || null,
     email: slot.reserved_email || null,
     status: slot.status || "reserved",
+    rh_notes: slot.rh_notes || null,
     source: "slot",
   };
 }
@@ -356,6 +357,7 @@ async function attachAttendeesToSlots(supabase: any, companyId: string, slots: a
           phone: row.phone || null,
           email: row.email || null,
           status: row.status || "confirmed",
+          rh_notes: row.rh_notes || null,
           source: "rh_shared_interview_attendees",
         }));
 
@@ -500,6 +502,100 @@ async function updateLeadStatusForInterview({
 
 
 
+
+async function findCandidateProfileForPresentation({
+  supabase,
+  candidate,
+  lead,
+  slot,
+}: {
+  supabase: any;
+  candidate?: any;
+  lead?: any;
+  slot?: any;
+}) {
+  const candidateId = clean(
+    candidate?.candidate_id ||
+      candidate?.candidateId ||
+      lead?.candidate_id ||
+      lead?.candidateId ||
+      slot?.candidate_id ||
+      slot?.candidateId
+  );
+
+  const email = normalizeText(
+    candidate?.email ||
+      candidate?.candidate_email ||
+      lead?.email ||
+      slot?.reserved_email
+  );
+
+  const phone = normalizePhone(
+    candidate?.phone ||
+      candidate?.candidate_phone ||
+      lead?.phone ||
+      slot?.reserved_phone
+  );
+
+  const selectFields = "id,name,email,phone,mobile,resumeFileUrl";
+
+  if (candidateId) {
+    const { data, error } = await supabase
+      .from("CandidateProfile")
+      .select(selectFields)
+      .eq("id", candidateId)
+      .maybeSingle();
+
+    if (!error && data?.id) return data;
+  }
+
+  if (email) {
+    const { data, error } = await supabase
+      .from("CandidateProfile")
+      .select(selectFields)
+      .ilike("email", email)
+      .limit(10);
+
+    if (!error && Array.isArray(data)) {
+      const match = data.find(
+        (item: any) => normalizeText(item?.email) === email
+      );
+
+      if (match?.id) return match;
+    }
+  }
+
+  if (phone) {
+    const phoneWithoutCountry =
+      phone.startsWith("55") && phone.length > 11 ? phone.slice(2) : phone;
+
+    const { data, error } = await supabase
+      .from("CandidateProfile")
+      .select(selectFields)
+      .limit(500);
+
+    if (!error && Array.isArray(data)) {
+      const match = data.find((item: any) => {
+        const profilePhone = normalizePhone(item?.phone);
+        const profileMobile = normalizePhone(item?.mobile);
+
+        const variants = [
+          profilePhone,
+          profileMobile,
+          profilePhone?.startsWith("55") ? profilePhone.slice(2) : profilePhone,
+          profileMobile?.startsWith("55") ? profileMobile.slice(2) : profileMobile,
+        ].filter(Boolean);
+
+        return variants.includes(phone) || variants.includes(phoneWithoutCountry);
+      });
+
+      if (match?.id) return match;
+    }
+  }
+
+  return null;
+}
+
 async function createOrUpdateClientPresentationFromInterviewAction({
   supabase,
   companyId,
@@ -530,6 +626,46 @@ async function createOrUpdateClientPresentationFromInterviewAction({
   const candidateEmail = normalizeText(candidate?.email || lead?.email || slot?.reserved_email || "");
   const candidateName =
     clean(candidate?.name || lead?.name || slot?.reserved_name) || "Candidato";
+
+  const rhNotes = clean(
+    candidate?.rh_notes ||
+      candidate?.rhNotes ||
+      lead?.rh_notes ||
+      lead?.rhNotes
+  );
+
+  const attachments = Array.isArray(candidate?.attachments)
+    ? candidate.attachments
+    : Array.isArray(lead?.attachments)
+      ? lead.attachments
+      : [];
+
+  const candidateProfile = await findCandidateProfileForPresentation({
+    supabase,
+    candidate,
+    lead,
+    slot,
+  });
+
+  const resolvedCandidateId =
+    clean(
+      candidate?.candidate_id ||
+        candidate?.candidateId ||
+        lead?.candidate_id ||
+        lead?.candidateId ||
+        slot?.candidate_id ||
+        slot?.candidateId ||
+        candidateProfile?.id
+    ) || null;
+
+  const resumeFileUrl =
+    clean(
+      candidate?.resume_file_url ||
+        candidate?.resumeFileUrl ||
+        lead?.resume_file_url ||
+        lead?.resumeFileUrl ||
+        candidateProfile?.resumeFileUrl
+    ) || null;
 
   let jobTitle = clean(slot?.title || "");
   if (!jobTitle && jobId) {
@@ -642,17 +778,21 @@ async function createOrUpdateClientPresentationFromInterviewAction({
     job_id: jobId,
 
     lead_id: lead?.id || candidate?.lead_id || null,
-    candidate_id:
-      candidate?.candidate_id ||
-      lead?.candidate_id ||
-      slot?.candidate_id ||
-      null,
+    candidate_id: resolvedCandidateId,
     attendee_id: candidate?.attendee_id || candidate?.id || null,
     interview_slot_id: slot?.id || null,
 
     candidate_name: candidateName,
     candidate_phone: candidatePhone || null,
     candidate_email: candidateEmail || null,
+    resume_file_url: resumeFileUrl,
+    rh_notes: rhNotes || existingCandidate?.rh_notes || null,
+    attachments:
+      attachments.length > 0
+        ? attachments
+        : Array.isArray(existingCandidate?.attachments)
+          ? existingCandidate.attachments
+          : [],
 
     job_title: jobTitle,
     meeting_url: slot?.meeting_url || null,
@@ -756,6 +896,13 @@ async function updateSharedAttendeeStatus({
         phone: slot.reserved_phone,
         email: slot.reserved_email,
         lead_id: slot.lead_id || null,
+        candidate_id:
+          clean(body.candidateId || body.candidate_id) ||
+          lead?.candidate_id ||
+          slot?.candidate_id ||
+          null,
+        rh_notes: clean(body.rhNotes || body.rh_notes) || null,
+        attachments: Array.isArray(body.attachments) ? body.attachments : [],
       },
       lead,
       status,
@@ -776,6 +923,7 @@ async function updateSharedAttendeeStatus({
     .from("rh_shared_interview_attendees")
     .update({
       status: attendeeStatus,
+      rh_notes: clean(body.rhNotes || body.rh_notes) || null,
       updated_at: new Date().toISOString(),
     })
     .eq("id", attendeeId)
@@ -807,7 +955,19 @@ async function updateSharedAttendeeStatus({
     supabase,
     companyId,
     slot,
-    candidate: attendee,
+    candidate: {
+      ...attendee,
+      candidate_id:
+        attendee?.candidate_id ||
+        clean(body.candidateId || body.candidate_id) ||
+        lead?.candidate_id ||
+        null,
+      rh_notes:
+        clean(body.rhNotes || body.rh_notes) ||
+        attendee?.rh_notes ||
+        null,
+      attachments: Array.isArray(body.attachments) ? body.attachments : [],
+    },
     lead,
     status,
   });
@@ -867,6 +1027,13 @@ async function updateCandidateInterviewStatus({
       phone: phone || slot.reserved_phone || null,
       email: email || slot.reserved_email || null,
       lead_id: leadId || slot.lead_id || null,
+      candidate_id:
+        clean(body.candidateId || body.candidate_id) ||
+        lead?.candidate_id ||
+        slot?.candidate_id ||
+        null,
+      rh_notes: clean(body.rhNotes || body.rh_notes) || null,
+      attachments: Array.isArray(body.attachments) ? body.attachments : [],
     },
     lead,
     status,
@@ -884,6 +1051,11 @@ async function updateCandidateInterviewStatus({
     status: slotStatusMap[status] || slot.status,
     updated_at: new Date().toISOString(),
   };
+
+  const rhNotes = clean(body.rhNotes || body.rh_notes);
+  if (rhNotes && ["approved", "rejected"].includes(status)) {
+    slotUpdate.rh_notes = rhNotes;
+  }
 
   if (status === "reschedule") {
     slotUpdate.reserved_name = null;
