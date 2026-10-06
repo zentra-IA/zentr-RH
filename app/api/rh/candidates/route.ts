@@ -149,6 +149,8 @@ export async function GET(req: NextRequest) {
     const education = searchParams.get("education")?.trim();
     const origin = searchParams.get("origin")?.trim();
     const status = searchParams.get("status")?.trim();
+    const portal = searchParams.get("portal")?.trim();
+    const push = searchParams.get("push")?.trim();
 
     const ageMin = Number(searchParams.get("ageMin") || "") || null;
     const ageMax = Number(searchParams.get("ageMax") || "") || null;
@@ -221,7 +223,7 @@ export async function GET(req: NextRequest) {
       where.birthDate = birthDateRange;
     }
 
-    const take = ageMin || ageMax ? 1000 : 300;
+    const take = ageMin || ageMax || portal || push ? 1000 : 300;
 
     const found = await prisma.candidateProfile.findMany({
       where,
@@ -232,7 +234,54 @@ export async function GET(req: NextRequest) {
     });
 
     const visibleFound = found.filter((candidate: any) => candidate.active !== false);
-    const candidates = filterByAge(visibleFound, ageMin, ageMax).map(enrichCandidate);
+
+    const portalRows = await prisma.$queryRaw<any[]>`
+      SELECT
+        p."candidate_id",
+        p."id" AS "portal_profile_id",
+        p."portal_status",
+        p."match_status",
+        EXISTS (
+          SELECT 1
+          FROM "candidate_push_subscriptions" s
+          WHERE s."profile_id" = p."id"
+            AND s."active" = true
+        ) AS "push_active"
+      FROM "candidate_portal_profiles" p
+      WHERE p."company_id" = ${companyId}::uuid
+        AND p."candidate_id" IS NOT NULL
+    `;
+
+    const portalByCandidate = new Map<string, any>(
+      portalRows.map((row: any) => [String(row.candidate_id), row])
+    );
+
+    let candidates = filterByAge(visibleFound, ageMin, ageMax)
+      .map(enrichCandidate)
+      .map((candidate: any) => {
+        const portalData = portalByCandidate.get(candidate.id);
+
+        return {
+          ...candidate,
+          portalProfileId: portalData?.portal_profile_id || null,
+          portalStatus: portalData?.portal_status || null,
+          portalLinked: portalData?.match_status === "MATCHED",
+          portalActive: portalData?.portal_status === "ACTIVE",
+          pushActive: Boolean(portalData?.push_active),
+        };
+      });
+
+    if (portal === "active") {
+      candidates = candidates.filter((candidate: any) => candidate.portalActive);
+    } else if (portal === "none") {
+      candidates = candidates.filter((candidate: any) => !candidate.portalProfileId);
+    }
+
+    if (push === "active") {
+      candidates = candidates.filter((candidate: any) => candidate.pushActive);
+    } else if (push === "inactive") {
+      candidates = candidates.filter((candidate: any) => !candidate.pushActive);
+    }
 
     const all = await prisma.candidateProfile.findMany({
       where: {

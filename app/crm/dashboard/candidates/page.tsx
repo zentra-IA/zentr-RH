@@ -35,6 +35,11 @@ type Candidate = {
   aiSummary?: string | null;
   aiExtractedData?: any;
   rawImportData?: any;
+  portalProfileId?: string | null;
+  portalStatus?: string | null;
+  portalLinked?: boolean;
+  portalActive?: boolean;
+  pushActive?: boolean;
   createdAt: string;
 };
 
@@ -124,6 +129,8 @@ export default function CandidatesPage() {
     education: "",
     origin: "",
     status: "",
+    portal: "",
+    push: "",
   });
 
   const [form, setForm] = useState({
@@ -157,7 +164,7 @@ export default function CandidatesPage() {
     const params = new URLSearchParams();
 
     Object.entries(filters).forEach(([key, value]) => {
-      if (value.trim()) params.set(key, value.trim());
+      if (String(value).trim()) params.set(key, String(value).trim());
     });
 
     return params.toString();
@@ -398,12 +405,44 @@ function shortText(value?: string | null, max = 90) {
   }
 
   async function copyText(text: string, successMessage: string) {
+    let copied = false;
+
     try {
-      await navigator.clipboard.writeText(text);
-      alert(successMessage);
-    } catch {
-      alert("Não consegui copiar automaticamente.");
+      if (
+        navigator.clipboard &&
+        window.isSecureContext &&
+        document.hasFocus()
+      ) {
+        await navigator.clipboard.writeText(text);
+        copied = true;
+      }
+    } catch {}
+
+    if (!copied) {
+      try {
+        const textarea = document.createElement("textarea");
+        textarea.value = text;
+        textarea.setAttribute("readonly", "");
+        textarea.style.position = "fixed";
+        textarea.style.left = "-9999px";
+        document.body.appendChild(textarea);
+        textarea.focus();
+        textarea.select();
+        copied = document.execCommand("copy");
+        document.body.removeChild(textarea);
+      } catch {}
     }
+
+    if (copied) {
+      alert(successMessage);
+    } else {
+      window.prompt(
+        "O navegador bloqueou a cópia automática. Copie o conteúdo abaixo:",
+        text
+      );
+    }
+
+    return copied;
   }
 
   function getCopyCandidates() {
@@ -607,6 +646,151 @@ function shortText(value?: string | null, max = 90) {
     }
   }
 
+  async function generatePortalLinks() {
+    const ids = selectedIds.length
+      ? selectedIds
+      : matchContext
+        ? candidates.map((candidate) => candidate.id)
+        : [];
+
+    if (!ids.length) {
+      alert("Selecione pelo menos um candidato.");
+      return;
+    }
+
+    if (
+      !confirm(
+        `Gerar/atualizar o Portal MOTIVAR de ${ids.length} candidato(s)?\n\nO sistema tentará vincular cada acesso ao currículo oficial.`
+      )
+    ) {
+      return;
+    }
+
+    setBatchLoading(true);
+
+    try {
+      const res = await fetch("/api/rh/candidate-portal", {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          action: "bulk_from_candidates",
+          candidateIds: ids,
+        }),
+      });
+
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        alert(data.error || "Erro ao gerar Portais.");
+        return;
+      }
+
+      const links = Array.isArray(data.links) ? data.links : [];
+
+      const text = links
+        .map(
+          (item: any) =>
+            `${item.name} | ${item.phone || "-"} | ${item.link}`
+        )
+        .join("\\n");
+
+      if (text) {
+        await navigator.clipboard.writeText(text);
+      }
+
+      alert(
+        `${links.length} link(s) do Portal gerado(s).${
+          text ? "\\nA lista foi copiada para a área de transferência." : ""
+        }`
+      );
+
+      await loadCandidates();
+    } catch (error) {
+      console.error("ERRO PORTAL LINKS:", error);
+      alert("Erro ao gerar links do Portal.");
+    } finally {
+      setBatchLoading(false);
+    }
+  }
+
+  async function sendPushForCurrentMatch() {
+    if (!matchContext?.jobId) {
+      alert("O disparo Push da vaga funciona a partir do matching.");
+      return;
+    }
+
+    const ids = selectedIds.length
+      ? selectedIds
+      : candidates.map((candidate) => candidate.id);
+
+    if (!ids.length) {
+      alert("Nenhum candidato selecionado.");
+      return;
+    }
+
+    const pushEligibleVisible = candidates.filter(
+      (candidate) =>
+        ids.includes(candidate.id) && candidate.pushActive
+    ).length;
+
+    if (
+      !confirm(
+        `Preparar Push da vaga "${matchContext.jobTitle}" para ${ids.length} candidato(s)?\n\nNesta tela, ${pushEligibleVisible} já aparecem com Push ativo. O servidor fará a validação final antes do envio.`
+      )
+    ) {
+      return;
+    }
+
+    setBatchLoading(true);
+
+    try {
+      const res = await fetch(
+        "/api/rh/candidate-portal/dispatch",
+        {
+          method: "POST",
+          credentials: "include",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            jobId: matchContext.jobId,
+            candidateIds: ids,
+            source: "job_match",
+            type: "JOB_OPPORTUNITY",
+          }),
+        }
+      );
+
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        alert(data.error || "Erro ao disparar Push.");
+        return;
+      }
+
+      alert(
+        [
+          `Candidatos selecionados: ${data.targetCount || ids.length}`,
+          `Com Portal: ${data.portalProfiles || 0}`,
+          `Elegíveis para Push: ${data.pushEligible || 0}`,
+          `Enviados agora: ${data.processing?.sent || 0}`,
+          `Sem Push/inelegíveis: ${data.skippedWithoutPush || 0}`,
+          `Duplicados recentes ignorados: ${data.skippedDuplicate || 0}`,
+        ].join("\\n")
+      );
+
+      await loadCandidates();
+    } catch (error) {
+      console.error("ERRO PUSH DA VAGA:", error);
+      alert("Erro ao disparar Push.");
+    } finally {
+      setBatchLoading(false);
+    }
+  }
+
   async function markSelectedForCurrentJob(status = "selected") {
     if (!matchContext?.jobId) {
       alert("Essa ação só funciona quando você veio do matching de uma vaga.");
@@ -661,7 +845,7 @@ function shortText(value?: string | null, max = 90) {
     const params = new URLSearchParams();
 
     Object.entries(filters).forEach(([key, value]) => {
-      if (value.trim()) params.set(key, value.trim());
+      if (String(value).trim()) params.set(key, String(value).trim());
     });
 
     await loadCandidates(params.toString());
@@ -1190,6 +1374,24 @@ function shortText(value?: string | null, max = 90) {
             </button>
 
             <button
+              style={styles.pushButton}
+              type="button"
+              disabled={batchLoading}
+              onClick={sendPushForCurrentMatch}
+            >
+              🔔 Enviar Push
+            </button>
+
+            <button
+              style={styles.secondaryButton}
+              type="button"
+              disabled={batchLoading}
+              onClick={generatePortalLinks}
+            >
+              🔗 Gerar links Portal
+            </button>
+
+            <button
               style={styles.secondaryButton}
               type="button"
               onClick={() => markSelectedForCurrentJob("selected")}
@@ -1234,6 +1436,18 @@ function shortText(value?: string | null, max = 90) {
               {selectedIds.length
                 ? `Criar lote (${selectedIds.length})`
                 : "Criar lote"}
+            </button>
+
+            <button
+              style={{
+                ...styles.secondaryButton,
+                opacity: selectedIds.length ? 1 : 0.55,
+              }}
+              type="button"
+              disabled={!selectedIds.length || batchLoading}
+              onClick={generatePortalLinks}
+            >
+              🔗 Gerar Portal
             </button>
 
             <button
@@ -1300,6 +1514,30 @@ function shortText(value?: string | null, max = 90) {
             ))}
           </select>
 
+          <select
+            style={styles.input}
+            value={filters.portal}
+            onChange={(event) =>
+              setFilters({ ...filters, portal: event.target.value })
+            }
+          >
+            <option value="">Todos os Portais</option>
+            <option value="active">Portal ativo</option>
+            <option value="none">Sem Portal</option>
+          </select>
+
+          <select
+            style={styles.input}
+            value={filters.push}
+            onChange={(event) =>
+              setFilters({ ...filters, push: event.target.value })
+            }
+          >
+            <option value="">Todos os Push</option>
+            <option value="active">Push ativo</option>
+            <option value="inactive">Sem Push ativo</option>
+          </select>
+
           <button style={styles.secondaryButton} onClick={applyFilters}>
             Filtrar
           </button>
@@ -1334,6 +1572,8 @@ function shortText(value?: string | null, max = 90) {
 <th style={styles.th}>Cargo</th>
                   <th style={styles.th}>Origem</th>
                   <th style={styles.th}>Status</th>
+                  <th style={styles.th}>Portal</th>
+                  <th style={styles.th}>Push</th>
                   <th style={styles.th}>Cadastro</th>
                   <th style={styles.th}>Ações</th>
                 </tr>
@@ -1406,6 +1646,36 @@ function shortText(value?: string | null, max = 90) {
                             </option>
                           ))}
                         </select>
+                      </td>
+
+                      <td style={styles.td}>
+                        <span
+                          style={
+                            candidate.portalActive
+                              ? styles.portalOn
+                              : candidate.portalProfileId
+                                ? styles.portalReady
+                                : styles.portalOff
+                          }
+                        >
+                          {candidate.portalActive
+                            ? "Ativo"
+                            : candidate.portalProfileId
+                              ? "Link gerado"
+                              : "Sem Portal"}
+                        </span>
+                      </td>
+
+                      <td style={styles.td}>
+                        <span
+                          style={
+                            candidate.pushActive
+                              ? styles.pushOn
+                              : styles.portalOff
+                          }
+                        >
+                          {candidate.pushActive ? "🔔 Ativo" : "Sem Push"}
+                        </span>
                       </td>
 
                       <td style={styles.td}>{formatDate(candidate.createdAt)}</td>
@@ -1892,6 +2162,51 @@ const styles: Record<string, React.CSSProperties> = {
     color: "#ffffff",
     fontWeight: 900,
     cursor: "pointer",
+  },
+  pushButton: {
+    border: 0,
+    borderRadius: 14,
+    padding: "12px 16px",
+    background: "linear-gradient(135deg,#14b8a6,#0f766e)",
+    color: "#ffffff",
+    fontWeight: 900,
+    cursor: "pointer",
+  },
+  portalOn: {
+    display: "inline-block",
+    padding: "5px 8px",
+    borderRadius: 999,
+    background: "#dcfce7",
+    color: "#15803d",
+    fontSize: 10,
+    fontWeight: 900,
+  },
+  portalReady: {
+    display: "inline-block",
+    padding: "5px 8px",
+    borderRadius: 999,
+    background: "#eff6ff",
+    color: "#1d4ed8",
+    fontSize: 10,
+    fontWeight: 900,
+  },
+  pushOn: {
+    display: "inline-block",
+    padding: "5px 8px",
+    borderRadius: 999,
+    background: "#ccfbf1",
+    color: "#0f766e",
+    fontSize: 10,
+    fontWeight: 900,
+  },
+  portalOff: {
+    display: "inline-block",
+    padding: "5px 8px",
+    borderRadius: 999,
+    background: "#f1f5f9",
+    color: "#64748b",
+    fontSize: 10,
+    fontWeight: 900,
   },
   dangerButton: {
     border: 0,

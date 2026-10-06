@@ -689,9 +689,17 @@ export async function POST(req: NextRequest) {
       ? await recentlyBlockedCandidateIds(job.id, cooldownDays)
       : new Set<string>();
 
+    const publicApplyCompanyId = String(
+      process.env.PUBLIC_APPLY_COMPANY_ID || ""
+    ).trim();
+
+    const candidateCompanyIds = Array.from(
+      new Set([companyId, publicApplyCompanyId].filter(Boolean))
+    );
+
     const rawCandidates = await prisma.candidateProfile.findMany({
       where: {
-        company_id: companyId,
+        company_id: { in: candidateCompanyIds },
         active: true,
       },
       orderBy: {
@@ -830,12 +838,20 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ error: "Vaga não encontrada." }, { status: 404 });
     }
 
+    const publicApplyCompanyId = String(
+      process.env.PUBLIC_APPLY_COMPANY_ID || ""
+    ).trim();
+
+    const candidateCompanyIds = Array.from(
+      new Set([companyId, publicApplyCompanyId].filter(Boolean))
+    );
+
     const candidates = await prisma.candidateProfile.findMany({
       where: {
         id: {
           in: candidateIds,
         },
-        company_id: companyId,
+        company_id: { in: candidateCompanyIds },
         active: true,
       },
       select: {

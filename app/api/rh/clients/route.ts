@@ -19,6 +19,17 @@ if (process.env.NODE_ENV !== "production") {
   globalForPrisma.prisma = prisma;
 }
 
+
+const ALLOWED_PIPELINE_STAGES = new Set([
+  "CLIENTE_NOVO",
+  "AGUARDANDO_FICHA",
+  "AGUARDANDO_CONTRATO",
+  "CONTRATO_ASSINADO_ATIVO",
+  "CONTRATO_NAO_ASSINADO",
+  "CLIENTE_INATIVO",
+  "CLIENTE_INADIMPLENTE",
+]);
+
 function cleanText(value: unknown) {
   const text = String(value || "").trim();
   return text.length ? text : null;
@@ -43,6 +54,7 @@ function normalizeClient(contact: any) {
     address: contact.address || "",
     cep: contact.cep || "",
     notes: contact.extra_contact || "",
+    pipelineStage: contact.rh_pipeline_stage || "CLIENTE_NOVO",
     createdAt: contact.created_at,
     updatedAt: contact.updated_at,
   };
@@ -208,6 +220,63 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ error: "ID obrigatório." }, { status: 400 });
     }
 
+    if (body.action === "pipeline_stage") {
+      const pipelineStage = cleanText(body.pipelineStage);
+
+      if (!pipelineStage || !ALLOWED_PIPELINE_STAGES.has(pipelineStage)) {
+        return NextResponse.json(
+          { error: "Etapa do funil inválida." },
+          { status: 400 }
+        );
+      }
+
+      const current = await prisma.company_contacts.findFirst({
+        where: { id, company_id: companyId },
+      });
+
+      if (!current) {
+        return NextResponse.json(
+          { error: "Cliente não encontrado." },
+          { status: 404 }
+        );
+      }
+
+      const updated = await prisma.company_contacts.update({
+        where: { id },
+        data: { rh_pipeline_stage: pipelineStage },
+      });
+
+      await emitOperationalEvent(
+        {
+          companyId,
+          branchId: branchId || current.branch_id || null,
+          userId,
+          module: "clientes",
+          action: "client_pipeline_changed",
+          entityType: "company_contacts",
+          entityId: id,
+          entityName:
+            current.company_name ||
+            current.restaurant_name ||
+            "Cliente",
+          description: `Moveu cliente no funil: ${current.rh_pipeline_stage || "CLIENTE_NOVO"} → ${pipelineStage}`,
+          before: current as unknown as Record<string, unknown>,
+          after: updated as unknown as Record<string, unknown>,
+          metadata: {
+            from: current.rh_pipeline_stage || "CLIENTE_NOVO",
+            to: pipelineStage,
+          },
+          eventKey: `client-pipeline:${id}:${Date.now()}`,
+        },
+        req
+      );
+
+      return NextResponse.json({
+        success: true,
+        client: normalizeClient(updated),
+      });
+    }
+
     const existingClient = await prisma.company_contacts.findFirst({
       where: {
         id,
@@ -342,6 +411,23 @@ export async function DELETE(req: NextRequest) {
       return NextResponse.json(
         { error: "Cliente não encontrado." },
         { status: 404 }
+      );
+    }
+
+    const openingCount = await prisma.rh_job_openings.count({
+      where: {
+        client_id: id,
+        company_id: companyId,
+      },
+    });
+
+    if (openingCount > 0) {
+      return NextResponse.json(
+        {
+          error:
+            "Este cliente possui fichas de abertura e documentos vinculados. Para preservar o histórico, ele não pode ser excluído.",
+        },
+        { status: 409 }
       );
     }
 

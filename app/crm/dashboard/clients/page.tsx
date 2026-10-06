@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import ClientOpeningFlow from "@/components/rh/ClientOpeningFlow";
+import ClientPipeline from "@/components/rh/ClientPipeline";
 
 type Client = {
   id: string;
@@ -16,6 +18,7 @@ type Client = {
   address?: string | null;
   cep?: string | null;
   notes?: string | null;
+  pipelineStage?: string | null;
 };
 
 type ClientForm = {
@@ -53,6 +56,8 @@ export default function ClientsPage() {
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [openingClient, setOpeningClient] = useState<Client | null>(null);
+  const [clientView, setClientView] = useState<"funnel" | "list">("funnel");
 
   useEffect(() => {
     loadClients();
@@ -134,11 +139,26 @@ export default function ClientsPage() {
         return;
       }
 
+      const wasEditing = Boolean(editingId);
+
       setForm(emptyForm);
       setEditingId(null);
       await loadClients();
 
-      alert(editingId ? "Cliente atualizado." : "Cliente cadastrado.");
+      if (!wasEditing && data.client) {
+        setOpeningClient(data.client);
+        setTimeout(() => {
+          document
+            .getElementById("rh-opening-flow")
+            ?.scrollIntoView({ behavior: "smooth", block: "start" });
+        }, 80);
+      }
+
+      alert(
+        wasEditing
+          ? "Cliente atualizado."
+          : "Cliente cadastrado. Agora preencha a Ficha de Abertura da primeira vaga."
+      );
     } finally {
       setSaving(false);
     }
@@ -225,7 +245,7 @@ export default function ClientsPage() {
         </div>
 
         <form onSubmit={saveClient} style={styles.formGrid}>
-          <Input label="Nome da empresa" value={form.companyName} onChange={(v) => updateForm("companyName", v)} placeholder="Ex: Rede Brasil" />
+          <Input label="Razão social / Nome jurídico" value={form.companyName} onChange={(v) => updateForm("companyName", v)} placeholder="Ex: Rede Brasil Serviços LTDA." />
           <Input label="CNPJ" value={form.cnpj} onChange={(v) => updateForm("cnpj", v)} placeholder="Somente se tiver" />
           <Input label="Responsável" value={form.responsibleName} onChange={(v) => updateForm("responsibleName", v)} placeholder="Ex: Angélica" />
           <Input label="WhatsApp" value={form.whatsapp} onChange={(v) => updateForm("whatsapp", v)} placeholder="Ex: 11999999999" />
@@ -253,6 +273,15 @@ export default function ClientsPage() {
         </form>
       </section>
 
+      {openingClient && (
+        <div id="rh-opening-flow">
+          <ClientOpeningFlow
+            client={openingClient}
+            onClose={() => setOpeningClient(null)}
+          />
+        </div>
+      )}
+
       <section style={styles.card}>
         <div style={styles.headerRow}>
           <div>
@@ -260,9 +289,35 @@ export default function ClientsPage() {
             <p style={styles.smallText}>Busque por empresa, responsável, CNPJ, WhatsApp, e-mail ou cidade.</p>
           </div>
 
-          <button type="button" style={styles.secondaryButton} onClick={loadClients}>
-            Atualizar
-          </button>
+          <div style={styles.headerActions}>
+            <button
+              type="button"
+              style={
+                clientView === "funnel"
+                  ? styles.viewButtonActive
+                  : styles.secondaryButton
+              }
+              onClick={() => setClientView("funnel")}
+            >
+              Funil
+            </button>
+
+            <button
+              type="button"
+              style={
+                clientView === "list"
+                  ? styles.viewButtonActive
+                  : styles.secondaryButton
+              }
+              onClick={() => setClientView("list")}
+            >
+              Lista
+            </button>
+
+            <button type="button" style={styles.secondaryButton} onClick={loadClients}>
+              Atualizar
+            </button>
+          </div>
         </div>
 
         <div style={styles.searchBox}>
@@ -272,8 +327,27 @@ export default function ClientsPage() {
         {loading && <div style={styles.empty}>Carregando clientes...</div>}
         {!loading && !filteredClients.length && <div style={styles.empty}>Nenhum cliente cadastrado.</div>}
 
-        {!loading && Boolean(filteredClients.length) && (
-          <div style={styles.clientGrid}>
+        {!loading &&
+          Boolean(filteredClients.length) &&
+          clientView === "funnel" && (
+            <ClientPipeline
+              clients={filteredClients}
+              onChanged={loadClients}
+              onOpenClient={(client) => {
+                setOpeningClient(client as Client);
+                setTimeout(() => {
+                  document
+                    .getElementById("rh-opening-flow")
+                    ?.scrollIntoView({ behavior: "smooth", block: "start" });
+                }, 50);
+              }}
+            />
+          )}
+
+        {!loading &&
+          Boolean(filteredClients.length) &&
+          clientView === "list" && (
+            <div style={styles.clientGrid}>
             {filteredClients.map((client) => (
               <article key={client.id} style={styles.clientCard}>
                 <div style={styles.clientTop}>
@@ -295,6 +369,20 @@ export default function ClientsPage() {
                 {client.notes && <p style={styles.notes}>{client.notes}</p>}
 
                 <div style={styles.actionRow}>
+                  <button
+                    style={styles.primaryButton}
+                    onClick={() => {
+                      setOpeningClient(client);
+                      setTimeout(() => {
+                        document
+                          .getElementById("rh-opening-flow")
+                          ?.scrollIntoView({ behavior: "smooth", block: "start" });
+                      }, 50);
+                    }}
+                  >
+                    Nova ficha de vaga
+                  </button>
+
                   <button style={styles.secondaryButton} onClick={() => editClient(client)}>
                     Editar
                   </button>
@@ -384,6 +472,21 @@ const styles: Record<string, React.CSSProperties> = {
     gap: 12,
     flexWrap: "wrap",
     alignItems: "center",
+  },
+  headerActions: {
+    display: "flex",
+    gap: 8,
+    flexWrap: "wrap",
+    alignItems: "center",
+  },
+  viewButtonActive: {
+    border: "1px solid #2563eb",
+    borderRadius: 16,
+    padding: "11px 14px",
+    background: "#2563eb",
+    color: "#ffffff",
+    fontWeight: 950,
+    cursor: "pointer",
   },
   sectionTitle: {
     margin: 0,

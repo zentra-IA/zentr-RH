@@ -6,12 +6,17 @@ import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 import FloatingTaskCenter from "@/components/tasks/FloatingTaskCenter";
 import FloatingInternalChat from "@/components/chat/FloatingInternalChat";
+import FloatingCandidatePortalChat from "@/components/rh/candidate-portal/FloatingCandidatePortalChat";
 import CommandCenterTracker from "./CommandCenterTracker";
 
 const MENU = [
   { label: "Clientes", href: "/crm/dashboard/clients", icon: "🏢" },
   { label: "Vagas", href: "/crm/dashboard/jobs", icon: "💼" },
   { label: "Candidatos", href: "/crm/dashboard/candidates", icon: "👥" },
+  { label: "Portal & Push", href: "/crm/dashboard/candidate-portal", icon: "🔔" },
+  { label: "Comunicação Portal", href: "/crm/dashboard/candidate-portal/comunicacao", icon: "📣" },
+  { label: "Publicações Portal", href: "/crm/dashboard/candidate-portal/publicacoes", icon: "📰" },
+  { label: "Chat candidatos", href: "/crm/dashboard/candidate-portal/chat", icon: "💬" },
   { label: "Disparar contatos", href: "/crm/dashboard/contacts", icon: "📒" },
   { label: "Painel", href: "/crm/dashboard", icon: "📊" },
   { label: "Inbox", href: "/crm/dashboard/inbox", icon: "💬" },
@@ -22,6 +27,7 @@ const MENU = [
     icon: "📤",
   },
   { label: "Contratação", href: "/crm/dashboard/hirings", icon: "📄" },
+  { label: "Equipe interna", href: "/crm/dashboard/equipe-interna", icon: "🧑‍💼", adminOnly: true },
   { label: "Tarefas", href: "/crm/dashboard/tasks", icon: "📋" },
   { label: "Centro de Comando", href: "/crm/dashboard/command-center", icon: "🛰️", adminOnly: true },
   { label: "Marketing IA", href: "/crm/dashboard/creative-generator", icon: "✨" },
@@ -124,6 +130,7 @@ export default function CrmDashboardLayout({ children }: { children: ReactNode }
 
       <FloatingTaskCenter />
       <FloatingInternalChat />
+      <FloatingCandidatePortalChat />
 
       <style jsx global>{`
         .crm-shell {

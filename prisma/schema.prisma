@@ -901,11 +901,16 @@ model company_contacts {
   state   String?
   cep     String?
 
+  // Funil comercial/relacionamento do cliente no RH
+  rh_pipeline_stage String @default("CLIENTE_NOVO")
+
   created_at DateTime @default(now()) @db.Timestamptz(6)
   updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
 
   companies companies @relation(fields: [company_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   branch    branches? @relation(fields: [branch_id], references: [id], onDelete: SetNull, onUpdate: NoAction)
+
+  rhJobOpenings rh_job_openings[]
 
   @@index([company_id], map: "idx_company_contacts_company_id")
   @@index([branch_id], map: "idx_company_contacts_branch_id")
@@ -1065,6 +1070,11 @@ model Job {
 
   workMode     String? // presencial | remoto | hibrido
   contractType String? // clt | pj | estagio | temporario
+
+  // Origem documental do processo seletivo
+  client_id  String? @db.Uuid
+  opening_id String? @db.Uuid
+
   salaryMin    Float?
   salaryMax    Float?
 
@@ -1098,6 +1108,8 @@ model Job {
   @@index([state], map: "idx_job_state")
   @@index([region], map: "idx_job_region")
   @@index([zipCode], map: "idx_job_zip_code")
+  @@index([client_id], map: "idx_job_client")
+  @@index([opening_id], map: "idx_job_opening")
 }
 
 model CandidateProfile {
@@ -1385,3 +1397,120 @@ enum RouteMode {
   NEAR_TO_FAR
   FAR_TO_NEAR
 }
+
+// =====================================================
+// RH / FICHA DE ABERTURA / DOCUMENTOS CONTRATUAIS
+// =====================================================
+
+model rh_job_openings {
+  id         String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  company_id String  @db.Uuid
+  branch_id  String? @db.Uuid
+  client_id  String  @db.Uuid
+  job_id     String?
+
+  // Fluxo:
+  // draft -> sheet_sent -> approved -> contract_generated
+  // -> contract_sent -> signed
+  status        String @default("draft")
+  contract_type String
+
+  position            String
+  quantity            Int    @default(1)
+  department          String?
+  request_responsible String?
+  direct_manager      String?
+
+  work_mode          String?
+  workplace_address  String?
+  work_schedule      String?
+  break_time         String?
+  remuneration       Float?
+  transport_benefit  String?
+  meal_benefit       String?
+  life_insurance     Boolean @default(false)
+  other_benefits     String?
+
+  education_required String?
+  courses            String?
+  required_skills    String?
+  desired_skills     String?
+  soft_skills        String?
+  activities         String[] @default([])
+
+  sla_first_candidates String?
+  sla_interviews       String?
+  sla_closing          String?
+
+  // Condições comerciais necessárias para preencher o contrato.
+  honorarium_text   String?
+  honorarium_amount Float?
+  honorarium_words  String?
+  payment_days      Int? @default(5)
+  suspension_days   Int? @default(10)
+  guarantee_days    Int?
+  forum_city        String?
+  forum_state       String?
+
+  sheet_sent_at        DateTime? @db.Timestamptz(6)
+  approved_at          DateTime? @db.Timestamptz(6)
+  contract_generated_at DateTime? @db.Timestamptz(6)
+  contract_sent_at     DateTime? @db.Timestamptz(6)
+  signed_at            DateTime? @db.Timestamptz(6)
+
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  client    company_contacts @relation(fields: [client_id], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  documents   rh_documents[]
+  signed_files rh_signed_contract_files[]
+
+  @@index([company_id], map: "idx_rh_job_openings_company")
+  @@index([branch_id], map: "idx_rh_job_openings_branch")
+  @@index([client_id], map: "idx_rh_job_openings_client")
+  @@index([job_id], map: "idx_rh_job_openings_job")
+  @@index([status], map: "idx_rh_job_openings_status")
+}
+
+model rh_documents {
+  id         String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  company_id String @db.Uuid
+  opening_id String @db.Uuid
+
+  // opening_sheet | contract
+  document_type   String
+  template_version String @default("2026-08-27")
+  status           String @default("generated")
+  content_text     String @db.Text
+
+  generated_at DateTime @default(now()) @db.Timestamptz(6)
+  sent_at      DateTime? @db.Timestamptz(6)
+  signed_at    DateTime? @db.Timestamptz(6)
+
+  opening rh_job_openings @relation(fields: [opening_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([company_id], map: "idx_rh_documents_company")
+  @@index([opening_id], map: "idx_rh_documents_opening")
+  @@index([document_type], map: "idx_rh_documents_type")
+}
+
+model rh_signed_contract_files {
+  id         String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  company_id String @db.Uuid
+  opening_id String @db.Uuid
+
+  storage_bucket String @default("rh-contracts")
+  storage_path   String
+  original_name  String
+  mime_type      String
+  size_bytes     Int
+  uploaded_by    String?
+  created_at     DateTime @default(now()) @db.Timestamptz(6)
+
+  opening rh_job_openings @relation(fields: [opening_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([company_id], map: "idx_rh_signed_contract_files_company")
+  @@index([opening_id], map: "idx_rh_signed_contract_files_opening")
+  @@unique([storage_bucket, storage_path], map: "uq_rh_signed_contract_storage")
+}
+
