@@ -10,11 +10,19 @@ export async function generateMetadata(
   const params = await Promise.resolve(context.params);
   const token = encodeURIComponent(decodeURIComponent(params.token));
 
+  const logoPath =
+    process.env.NEXT_PUBLIC_MOTIVAR_LOGO_PATH ||
+    "/motivar-logo.png";
+
   return {
     title: "Portal do Candidato | MOTIVAR RH",
     description:
       "Acompanhe vagas, processos seletivos e entrevistas da MOTIVAR RH.",
     manifest: `/api/candidate-portal/${token}/manifest`,
+    icons: {
+      icon: logoPath,
+      apple: logoPath,
+    },
     themeColor: "#1d4ed8",
     appleWebApp: {
       capable: true,

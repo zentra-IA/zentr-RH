@@ -5,6 +5,7 @@ import CandidatePushManager from "@/components/candidate-portal/CandidatePushMan
 import CandidatePortalPosts from "@/components/candidate-portal/CandidatePortalPosts";
 import CandidatePortalChat from "@/components/candidate-portal/CandidatePortalChat";
 import CandidatePortalFloatingChat from "@/components/candidate-portal/CandidatePortalFloatingChat";
+import CandidatePortalTimeline from "@/components/candidate-portal/CandidatePortalTimeline";
 
 type PortalData = {
   requiresIdentity: boolean;
@@ -17,6 +18,9 @@ type PortalData = {
   interests?: any[];
   interviewResponses?: any[];
 };
+
+const MOTIVAR_LOGO_PATH =
+  process.env.NEXT_PUBLIC_MOTIVAR_LOGO_PATH || "/motivar-logo.png";
 
 function money(value?: number | null) {
   if (value == null) return null;
@@ -58,6 +62,8 @@ export default function CandidatePortalApp({
   const [identityLoading, setIdentityLoading] = useState(false);
   const [tab, setTab] = useState("inicio");
   const [busy, setBusy] = useState("");
+  const [focusPostId, setFocusPostId] = useState("");
+  const [focusJobId, setFocusJobId] = useState("");
 
   const endpoint = `/api/candidate-portal/${encodeURIComponent(portalToken)}`;
 
@@ -87,46 +93,88 @@ export default function CandidatePortalApp({
   }
 
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const requestedTab = params.get("tab");
-    if (requestedTab) setTab(requestedTab);
+    function applyPortalUrl(rawUrl: string) {
+      const url = new URL(rawUrl, window.location.origin);
+      const params = url.searchParams;
+      const requestedTab = params.get("tab");
 
-    const source = params.get("src");
-    const notificationId = params.get("notification_id");
-    const deliveryId = params.get("delivery_id");
+      if (requestedTab) {
+        setTab(requestedTab);
+      }
 
-    if (source === "push" && notificationId && deliveryId) {
-      const trackingEndpoint =
-        `/api/candidate-portal/${encodeURIComponent(portalToken)}/track`;
+      setFocusPostId(params.get("post") || "");
+      setFocusJobId(params.get("job") || "");
 
-      void fetch(trackingEndpoint, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          notificationId,
-          deliveryId,
-          event: "opened",
-        }),
-      });
+      const source = params.get("src");
+      const notificationId = params.get("notification_id");
+      const deliveryId = params.get("delivery_id");
 
-      const viewedTimer = window.setTimeout(() => {
+      if (source === "push" && notificationId && deliveryId) {
+        const trackingEndpoint =
+          `/api/candidate-portal/${encodeURIComponent(portalToken)}/track`;
+
         void fetch(trackingEndpoint, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             notificationId,
             deliveryId,
-            event: "viewed",
+            event: "opened",
           }),
         });
-      }, 1500);
 
-      void load();
-
-      return () => window.clearTimeout(viewedTimer);
+        window.setTimeout(() => {
+          void fetch(trackingEndpoint, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              notificationId,
+              deliveryId,
+              event: "viewed",
+            }),
+          });
+        }, 1500);
+      }
     }
 
+    applyPortalUrl(window.location.href);
+
+    const onServiceWorkerMessage = (event: MessageEvent) => {
+      if (
+        event.data?.type !== "MOTIVAR_PUSH_NAVIGATE" ||
+        !event.data?.url
+      ) {
+        return;
+      }
+
+      const nextUrl = new URL(
+        String(event.data.url),
+        window.location.origin
+      );
+
+      window.history.replaceState(
+        {},
+        "",
+        `${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}`
+      );
+
+      applyPortalUrl(nextUrl.toString());
+      void load();
+    };
+
+    navigator.serviceWorker?.addEventListener(
+      "message",
+      onServiceWorkerMessage
+    );
+
     void load();
+
+    return () => {
+      navigator.serviceWorker?.removeEventListener(
+        "message",
+        onServiceWorkerMessage
+      );
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [portalToken]);
 
@@ -289,7 +337,16 @@ export default function CandidatePortalApp({
     return (
       <main className="candidate-portal-shell identity">
         <section className="cp-identity-card">
-          <div className="cp-logo">M</div>
+          <div className="cp-logo">
+            <span>M</span>
+            <img
+              src={MOTIVAR_LOGO_PATH}
+              alt="MOTIVAR RH"
+              onError={(event) => {
+                event.currentTarget.style.display = "none";
+              }}
+            />
+          </div>
           <span className="cp-eyebrow">PORTAL DO CANDIDATO</span>
           <h1>Olá, {firstName}.</h1>
           <p>
@@ -334,7 +391,16 @@ export default function CandidatePortalApp({
     <main className="candidate-portal-shell">
       <header className="cp-header">
         <div className="cp-brand">
-          <div className="cp-logo small">M</div>
+          <div className="cp-logo small">
+            <span>M</span>
+            <img
+              src={MOTIVAR_LOGO_PATH}
+              alt="MOTIVAR RH"
+              onError={(event) => {
+                event.currentTarget.style.display = "none";
+              }}
+            />
+          </div>
           <div>
             <strong>MOTIVAR RH</strong>
             <span>Portal do Candidato</span>
@@ -413,25 +479,19 @@ export default function CandidatePortalApp({
             </button>
           </section>
 
-          <section className="cp-card">
-            <h2>Próximas oportunidades</h2>
-            <div className="cp-list">
-              {(data?.jobs || []).slice(0, 3).map((job: any) => (
-                <JobCard
-                  key={job.id}
-                  job={job}
-                  interest={interestMap.get(job.id)}
-                  busy={busy === `job:${job.id}`}
-                  onInterest={setInterest}
-                />
-              ))}
-              {!data?.jobs?.length && (
-                <div className="cp-empty">
-                  Nenhuma nova vaga compatível disponível agora.
-                </div>
-              )}
-            </div>
-          </section>
+          <CandidatePortalTimeline
+            portalToken={portalToken}
+            jobs={data?.jobs || []}
+            applications={data?.applications || []}
+            interviews={data?.interviews || []}
+            interestMap={interestMap}
+            busy={busy}
+            focusPostId={focusPostId}
+            focusJobId={focusJobId}
+            onInterest={setInterest}
+            onOpenChat={() => setTab("chat")}
+            onOpenTab={setTab}
+          />
         </>
       )}
 

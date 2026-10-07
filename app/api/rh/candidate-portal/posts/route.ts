@@ -494,7 +494,7 @@ export async function POST(req: NextRequest) {
         profile
       );
 
-      const deepLink = `${portalLink}?tab=novidades&post=${encodeURIComponent(
+      const deepLink = `${portalLink}?tab=inicio&post=${encodeURIComponent(
         post.id
       )}`;
 

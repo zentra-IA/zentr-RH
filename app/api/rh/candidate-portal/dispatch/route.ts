@@ -227,8 +227,8 @@ export async function POST(req: NextRequest) {
 
       const portalLink = buildCandidatePortalUrl(req.nextUrl.origin, profile);
       const deepLink = jobId
-        ? `${portalLink}?tab=vagas&job=${encodeURIComponent(jobId)}`
-        : `${portalLink}?tab=notificacoes`;
+        ? `${portalLink}?tab=inicio&job=${encodeURIComponent(jobId)}`
+        : `${portalLink}?tab=inicio`;
 
       const notificationRows = await prisma.$queryRaw<any[]>`
         INSERT INTO "candidate_notifications" (

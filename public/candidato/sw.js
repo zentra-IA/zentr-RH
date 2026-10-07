@@ -25,8 +25,8 @@ self.addEventListener("push", (event) => {
   event.waitUntil(
     self.registration.showNotification(data.title || "MOTIVAR RH", {
       body: data.body || "",
-      icon: data.icon || "/candidato/motivar-icon.svg",
-      badge: data.badge || "/candidato/motivar-icon.svg",
+      icon: data.icon || "/motivar-logo.png",
+      badge: data.badge || "/motivar-logo.png",
       tag: data.tag || "motivar-candidate",
       renotify: Boolean(data.renotify ?? true),
       requireInteraction: Boolean(data.requireInteraction),
@@ -89,14 +89,23 @@ self.addEventListener("notificationclick", (event) => {
       for (const client of windows) {
         if (
           client.url.startsWith(self.location.origin + "/candidato/") &&
-          "navigate" in client &&
           "focus" in client
         ) {
           try {
-            await client.navigate(absolute);
+            if ("postMessage" in client) {
+              client.postMessage({
+                type: "MOTIVAR_PUSH_NAVIGATE",
+                url: absolute,
+              });
+            }
+
+            if ("navigate" in client) {
+              await client.navigate(absolute);
+            }
+
             return client.focus();
           } catch {
-            // Abre uma nova janela se o navegador impedir navigate.
+            // Se o navegador impedir navigate, abre outra janela.
           }
         }
       }

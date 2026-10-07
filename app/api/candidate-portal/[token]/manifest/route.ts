@@ -9,6 +9,10 @@ export async function GET(
   const params = await Promise.resolve(context.params);
   const token = encodeURIComponent(decodeURIComponent(params.token));
 
+  const logoPath =
+    process.env.NEXT_PUBLIC_MOTIVAR_LOGO_PATH ||
+    "/motivar-logo.png";
+
   const manifest = {
     name: "Portal MOTIVAR RH",
     short_name: "MOTIVAR",
@@ -22,10 +26,9 @@ export async function GET(
     lang: "pt-BR",
     icons: [
       {
-        src: "/candidato/motivar-icon.svg",
+        src: logoPath,
         sizes: "any",
-        type: "image/svg+xml",
-        purpose: "any maskable",
+        purpose: "any",
       },
     ],
   };

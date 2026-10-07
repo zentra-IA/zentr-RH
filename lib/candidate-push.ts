@@ -45,14 +45,18 @@ export async function sendCandidateWebPush(
 ) {
   configureCandidateWebPush();
 
+  const logoPath =
+    process.env.NEXT_PUBLIC_MOTIVAR_LOGO_PATH ||
+    "/motivar-logo.png";
+
   return webpush.sendNotification(
     subscription,
     JSON.stringify({
       title: payload.title,
       body: payload.body,
       url: payload.url,
-      icon: "/candidato/motivar-icon.svg",
-      badge: "/candidato/motivar-icon.svg",
+      icon: logoPath,
+      badge: logoPath,
       tag:
         payload.tag ||
         `motivar-candidate-${payload.type.toLowerCase()}`,

@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { PrismaClient } from "@prisma/client";
+import { Prisma, PrismaClient } from "@prisma/client";
 import { requireCompany } from "@/lib/server-company";
+import { buildCandidatePortalUrl } from "@/lib/candidate-portal-access";
+import { processCandidatePushQueue } from "@/lib/candidate-push-dispatch";
 
 export const dynamic = "force-dynamic";
 
@@ -591,6 +593,214 @@ async function createOrUpdateJobMatches(job: any, ranked: MatchResult[]) {
   }
 }
 
+
+async function notifyMatchedPortalCandidates(options: {
+  companyId: string;
+  origin: string;
+  job: any;
+  ranked: MatchResult[];
+}) {
+  const candidateIds: string[] = Array.from(
+    new Set(
+      options.ranked
+        .filter((item) => Number(item.score || 0) >= 60)
+        .map((item) => String(item.candidate?.id || "").trim())
+        .filter(Boolean)
+    )
+  );
+
+  if (!candidateIds.length) {
+    return {
+      matchedCandidates: 0,
+      portalProfiles: 0,
+      notificationsCreated: 0,
+      deliveriesCreated: 0,
+      skippedDuplicate: 0,
+      processing: { processed: 0, sent: 0, failed: 0 },
+    };
+  }
+
+  const profiles = await prisma.$queryRaw<any[]>`
+    SELECT
+      p.*,
+      COALESCE(pref."jobs_enabled", true) AS "jobs_enabled",
+      EXISTS (
+        SELECT 1
+        FROM "candidate_push_subscriptions" s
+        WHERE s."profile_id" = p."id"
+          AND s."active" = true
+      ) AS "push_active"
+    FROM "candidate_portal_profiles" p
+    LEFT JOIN "candidate_push_preferences" pref
+      ON pref."profile_id" = p."id"
+    WHERE p."company_id" = ${options.companyId}::uuid
+      AND p."candidate_id" IN (${Prisma.join(candidateIds)})
+      AND p."access_active" = true
+  `;
+
+  if (!profiles.length) {
+    return {
+      matchedCandidates: candidateIds.length,
+      portalProfiles: 0,
+      notificationsCreated: 0,
+      deliveriesCreated: 0,
+      skippedDuplicate: 0,
+      processing: { processed: 0, sent: 0, failed: 0 },
+    };
+  }
+
+  const title = "💼 Nova vaga compatível com seu perfil";
+  const location = [options.job.city, options.job.state]
+    .filter(Boolean)
+    .join(" / ");
+
+  const message = `${options.job.title}${
+    location ? ` • ${location}` : ""
+  }. Veja os detalhes no Portal MOTIVAR e registre seu interesse.`;
+
+  const pushEligible = profiles.filter(
+    (profile) =>
+      profile.push_active === true &&
+      profile.jobs_enabled !== false
+  ).length;
+
+  const campaignRows = await prisma.$queryRaw<any[]>`
+    INSERT INTO "candidate_push_campaigns" (
+      "company_id",
+      "job_id",
+      "source",
+      "title",
+      "message",
+      "target_count",
+      "eligible_count",
+      "created_by"
+    )
+    VALUES (
+      ${options.companyId}::uuid,
+      ${options.job.id},
+      'job_match_auto',
+      ${title},
+      ${message},
+      ${profiles.length},
+      ${pushEligible},
+      NULL
+    )
+    RETURNING *
+  `;
+
+  const campaign = campaignRows[0];
+  let notificationsCreated = 0;
+  let deliveriesCreated = 0;
+  let skippedDuplicate = 0;
+
+  for (const profile of profiles) {
+    const previous = await prisma.$queryRaw<any[]>`
+      SELECT "id"
+      FROM "candidate_notifications"
+      WHERE "profile_id" = ${profile.id}::uuid
+        AND "job_id" = ${options.job.id}
+        AND "type" = 'JOB_OPPORTUNITY'
+        AND "created_at" > now() - interval '7 days'
+      LIMIT 1
+    `;
+
+    if (previous.length) {
+      skippedDuplicate += 1;
+      continue;
+    }
+
+    const portalLink = buildCandidatePortalUrl(
+      options.origin,
+      profile
+    );
+
+    const deepLink = `${portalLink}?tab=inicio&job=${encodeURIComponent(
+      options.job.id
+    )}`;
+
+    const notificationRows = await prisma.$queryRaw<any[]>`
+      INSERT INTO "candidate_notifications" (
+        "company_id",
+        "profile_id",
+        "candidate_id",
+        "campaign_id",
+        "job_id",
+        "type",
+        "title",
+        "body",
+        "deep_link"
+      )
+      VALUES (
+        ${options.companyId}::uuid,
+        ${profile.id}::uuid,
+        ${profile.candidate_id || null},
+        ${campaign.id}::uuid,
+        ${options.job.id},
+        'JOB_OPPORTUNITY',
+        ${title},
+        ${message},
+        ${deepLink}
+      )
+      RETURNING "id"
+    `;
+
+    notificationsCreated += 1;
+
+    if (
+      profile.push_active === true &&
+      profile.jobs_enabled !== false
+    ) {
+      const created = await prisma.$executeRaw`
+        INSERT INTO "candidate_notification_deliveries" (
+          "company_id",
+          "notification_id",
+          "subscription_id"
+        )
+        SELECT
+          ${options.companyId}::uuid,
+          ${notificationRows[0].id}::uuid,
+          s."id"
+        FROM "candidate_push_subscriptions" s
+        WHERE s."profile_id" = ${profile.id}::uuid
+          AND s."active" = true
+        ON CONFLICT (
+          "notification_id",
+          "subscription_id"
+        ) DO NOTHING
+      `;
+
+      deliveriesCreated += Number(created || 0);
+    }
+  }
+
+  await prisma.$executeRaw`
+    UPDATE "candidate_push_campaigns"
+    SET
+      "eligible_count" = ${pushEligible},
+      "queued_count" = ${deliveriesCreated},
+      "skipped_count" = ${skippedDuplicate},
+      "updated_at" = now()
+    WHERE "id" = ${campaign.id}::uuid
+  `;
+
+  const processing =
+    deliveriesCreated > 0
+      ? await processCandidatePushQueue({
+          companyId: options.companyId,
+          limit: 120,
+        })
+      : { processed: 0, sent: 0, failed: 0 };
+
+  return {
+    matchedCandidates: candidateIds.length,
+    portalProfiles: profiles.length,
+    notificationsCreated,
+    deliveriesCreated,
+    skippedDuplicate,
+    processing,
+  };
+}
+
 function responseCandidate(item: MatchResult) {
   const candidate = item.candidate;
 
@@ -770,6 +980,30 @@ export async function POST(req: NextRequest) {
 
     await createOrUpdateJobMatches(job, ranked);
 
+    let portalAutomation: any = null;
+
+    if (body.notifyPortal !== false) {
+      try {
+        portalAutomation = await notifyMatchedPortalCandidates({
+          companyId,
+          origin: req.nextUrl.origin,
+          job,
+          ranked,
+        });
+      } catch (automationError: any) {
+        console.error(
+          "AUTO ALERTA PORTAL CANDIDATO:",
+          automationError?.message || automationError
+        );
+
+        portalAutomation = {
+          error:
+            automationError?.message ||
+            "Matching salvo, mas o alerta automático do Portal falhou.",
+        };
+      }
+    }
+
     return NextResponse.json({
       success: true,
       engine,
@@ -780,6 +1014,7 @@ export async function POST(req: NextRequest) {
       cooldownDays,
       preselectedCandidates: preselected.length,
       matches: ranked.map(responseCandidate),
+      portalAutomation,
     });
   } catch (error: any) {
     console.error("POST /api/rh/jobs/match:", error);
