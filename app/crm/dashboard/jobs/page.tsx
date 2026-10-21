@@ -314,15 +314,21 @@ export default function JobsPage() {
   }, []);
 
   useEffect(() => {
-    if (form.contractType === "estagio") {
+    // Defaults só para uma NOVA vaga digitada manualmente.
+    // Ao editar uma vaga gerada pela Ficha de Abertura, preservamos exatamente
+    // os dados sincronizados e não inventamos idade/experiência.
+    if (!editingId && form.contractType === "estagio") {
       setForm((current) => ({
         ...current,
         ageMin: current.ageMin || "16",
         courseStatus: current.courseStatus || "cursando",
-        experienceMode: "sem_experiencia",
+        experienceMode:
+          current.experienceMode === "indiferente"
+            ? "sem_experiencia"
+            : current.experienceMode,
       }));
     }
-  }, [form.contractType]);
+  }, [form.contractType, editingId]);
 
   const clientOptions = useMemo(() => {
     return clients

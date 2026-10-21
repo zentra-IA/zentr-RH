@@ -4,7 +4,10 @@ import {
   rgb,
   PDFFont,
   PDFPage,
+  PDFImage,
 } from "pdf-lib";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 
 const A4 = { width: 595.28, height: 841.89 };
 
@@ -68,16 +71,30 @@ function wrapLine(
 function isMainTitle(line: string) {
   return (
     /^CONTRATO DE PRESTAÇÃO DE SERVIÇOS/i.test(line) ||
-    /^FICHA DE ABERTURA DE VAGA$/i.test(line)
+    /^FICHA DE ABERTURA DE VAGA$/i.test(line) ||
+    /^TERMO DE COMPROMISSO DE ESTÁGIO$/i.test(line) ||
+    /^\d+º RELATÓRIO DE ACOMPANHAMENTO DE ESTÁGIO$/i.test(line) ||
+    /^Aditivo ao Instrumento Jurídico/i.test(line) ||
+    /^RESCISÃO DE ACORDO DE COOPERAÇÃO/i.test(line) ||
+    /^DECLARAÇÃO DE JORNADA DE ESTÁGIO$/i.test(line) ||
+    /^ACORDO DE COOPERAÇÃO PARA CONCESSÃO DE ESTÁGIO$/i.test(line)
   );
 }
 
 function isClauseHeading(line: string) {
-  return /^CLÁUSULA\s+[A-ZÁÉÍÓÚÃÕÇ]+/i.test(line);
+  return (
+    /^CLÁUSULA\s+\d+[ªº°]?\s*-\s+[A-ZÁÉÍÓÚÃÕÇ]/.test(line) ||
+    /^CLÁUSULA\s+[A-ZÁÉÍÓÚÃÕÇ]+/i.test(line)
+  );
 }
 
 function isSectionHeading(line: string) {
-  return /^[1-9]\.\s+[A-ZÁÉÍÓÚÃÕÇ][A-ZÁÉÍÓÚÃÕÇ\s/()\-]+$/.test(line);
+  return (
+    /^[1-9]\.\s+[A-ZÁÉÍÓÚÃÕÇ][A-ZÁÉÍÓÚÃÕÇ\s/()\-]+$/.test(line) ||
+    /^(RESUMO|CLÁUSULAS|INSTITUIÇÃO DE ENSINO|AGENTE DE INTEGRAÇÃO|EMPRESA CONCEDENTE|ESTAGIÁRIO|RESPONSÁVEL PELO ESTAGIÁRIO|DADOS DO ESTÁGIO)$/i.test(
+      line
+    )
+  );
 }
 
 function isNumberedClause(line: string) {
@@ -102,23 +119,47 @@ function centeredX(text: string, font: PDFFont, size: number) {
 function drawHeader(
   page: PDFPage,
   regular: PDFFont,
-  bold: PDFFont
+  bold: PDFFont,
+  logo?: PDFImage | null
 ) {
-  page.drawText("MOTIVAR RH", {
-    x: MARGIN_X,
-    y: HEADER_Y,
-    size: 10.5,
-    font: bold,
-    color: NAVY,
-  });
+  if (logo) {
+    const maxWidth = 86;
+    const maxHeight = 31;
+    const scale = Math.min(maxWidth / logo.width, maxHeight / logo.height);
+    const width = logo.width * scale;
+    const height = logo.height * scale;
 
-  page.drawText("Recrutamento e Seleção", {
-    x: MARGIN_X + 72,
-    y: HEADER_Y + 0.3,
-    size: 8.5,
-    font: regular,
-    color: MUTED,
-  });
+    page.drawImage(logo, {
+      x: MARGIN_X,
+      y: HEADER_Y - 6,
+      width,
+      height,
+    });
+
+    page.drawText("Recrutamento e Seleção", {
+      x: MARGIN_X + width + 10,
+      y: HEADER_Y + 1,
+      size: 8.5,
+      font: regular,
+      color: MUTED,
+    });
+  } else {
+    page.drawText("MOTIVAR RH", {
+      x: MARGIN_X,
+      y: HEADER_Y,
+      size: 10.5,
+      font: bold,
+      color: NAVY,
+    });
+
+    page.drawText("Recrutamento e Seleção", {
+      x: MARGIN_X + 72,
+      y: HEADER_Y + 0.3,
+      size: 8.5,
+      font: regular,
+      color: MUTED,
+    });
+  }
 
   page.drawLine({
     start: { x: MARGIN_X, y: HEADER_Y - 10 },
@@ -206,6 +247,35 @@ export async function createLegalPdf(body: string) {
     StandardFonts.HelveticaBold
   );
 
+  let logo: PDFImage | null = null;
+  try {
+    const candidates = [
+      process.env.MOTIVAR_DOCUMENT_LOGO_PATH,
+      "/motivar-logo-documentos.jpg",
+      process.env.NEXT_PUBLIC_MOTIVAR_LOGO_PATH,
+      "/logo.jpeg",
+    ].filter(Boolean) as string[];
+
+    for (const configured of candidates) {
+      try {
+        const relativeLogo = configured.replace(/^\/+/, "");
+        const logoBytes = await readFile(
+          path.join(process.cwd(), "public", relativeLogo)
+        );
+
+        logo = /\.png$/i.test(relativeLogo)
+          ? await pdf.embedPng(logoBytes)
+          : await pdf.embedJpg(logoBytes);
+
+        if (logo) break;
+      } catch {
+        // Tenta o próximo caminho.
+      }
+    }
+  } catch {
+    // Mantém o cabeçalho textual como fallback.
+  }
+
   const sourceLines = normalizeForPdf(body).split(/\r?\n/);
 
   let pageNumber = 1;
@@ -215,7 +285,7 @@ export async function createLegalPdf(body: string) {
   const maxWidth = A4.width - MARGIN_X * 2;
 
   const preparePage = () => {
-    drawHeader(page, helvetica, helveticaBold);
+    drawHeader(page, helvetica, helveticaBold, logo);
   };
 
   const finishPage = () => {

@@ -59,6 +59,219 @@ function toActivities(value: unknown) {
     .slice(0, 5);
 }
 
+
+function parseList(value: unknown) {
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item || "").trim()).filter(Boolean);
+  }
+
+  return String(value || "")
+    .split(/[,;|]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function normalizeSimpleText(value: unknown) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase();
+}
+
+function normalizeWorkMode(value: unknown) {
+  const normalized = normalizeSimpleText(value);
+
+  if (normalized.includes("hibr")) return "hibrido";
+  if (normalized.includes("remot")) return "remoto";
+  if (normalized.includes("presenc")) return "presencial";
+
+  return normalized || null;
+}
+
+function normalizeEducationRequired(value: unknown, contractType: RhContractType) {
+  const normalized = normalizeSimpleText(value);
+
+  if (normalized.includes("superior")) {
+    if (normalized.includes("complet")) return "superior_completo";
+    return "superior_cursando";
+  }
+
+  if (normalized.includes("tecnic")) return "tecnico";
+
+  if (normalized.includes("medio")) {
+    if (normalized.includes("complet")) return "medio_completo";
+    if (normalized.includes("incomplet")) return "medio_incompleto";
+    return "medio_cursando";
+  }
+
+  if (normalized.includes("fundamental")) return "fundamental";
+
+  if (contractType === "ESTAGIO_SUPERIOR") return "superior_cursando";
+
+  return cleanText(value);
+}
+
+function clientDisplayName(client: any) {
+  return (
+    cleanText(client?.company_name) ||
+    cleanText(client?.restaurant_name) ||
+    cleanText(client?.name) ||
+    "Cliente"
+  );
+}
+
+function buildJobDataFromOpening(
+  opening: any,
+  companyId: string,
+  branchId?: string | null
+) {
+  const client = opening.client || {};
+  const clientName = clientDisplayName(client);
+  const contractType =
+    opening.contract_type === "CLT" ? "clt" : "estagio";
+
+  const skillsRequired = parseList(opening.required_skills);
+  const activities = Array.isArray(opening.activities)
+    ? opening.activities.map((item: unknown) => String(item || "").trim()).filter(Boolean)
+    : [];
+
+  const educationRequired = normalizeEducationRequired(
+    opening.education_required,
+    opening.contract_type
+  );
+
+  const courseStatus = contractType === "estagio" ? "cursando" : null;
+  const courseArea = cleanText(opening.courses);
+  const experienceMode = "indiferente";
+
+  const criteriaLines = [
+    opening.desired_skills
+      ? `Habilidades desejadas: ${opening.desired_skills}`
+      : null,
+    opening.soft_skills
+      ? `Competências comportamentais: ${opening.soft_skills}`
+      : null,
+    opening.courses ? `Cursos / áreas: ${opening.courses}` : null,
+    opening.work_schedule ? `Jornada: ${opening.work_schedule}` : null,
+    opening.break_time ? `Intervalo: ${opening.break_time}` : null,
+  ].filter(Boolean);
+
+  const requirementsText = criteriaLines.join("\n") || null;
+  const city = cleanText(client.city);
+  const state = cleanText(client.state);
+  const zipCode = cleanText(client.cep);
+  const workMode = normalizeWorkMode(opening.work_mode);
+  const responsibleName = cleanText(opening.request_responsible);
+  const shift = cleanText(opening.work_schedule);
+  const openings = Math.max(1, Number(opening.quantity || 1));
+  const salary = opening.remuneration == null ? null : Number(opening.remuneration);
+
+  const commonCriteria = {
+    source: "rh_job_opening",
+    openingId: opening.id,
+    clientId: opening.client_id,
+    clientName,
+    openings,
+    priority: "normal",
+    responsibleUserId: null,
+    responsibleName,
+    city,
+    state,
+    neighborhood: null,
+    region: "nenhuma",
+    zipCode,
+    contractType,
+    workMode,
+    shift,
+    educationRequired,
+    educationCurrent: null,
+    courseStatus,
+    courseArea,
+    studentYear: null,
+    experienceRequired: null,
+    experienceMode,
+    minExperienceMonths: null,
+    skillsRequired,
+    languagesRequired: [],
+    ageMin: null,
+    ageMax: null,
+    startDate: null,
+    dueDate: null,
+    meetLink: null,
+    processDate: null,
+    processTime: null,
+  };
+
+  return {
+    company_id: companyId,
+    branch_id: branchId || opening.branch_id || null,
+    client_id: opening.client_id,
+    opening_id: opening.id,
+
+    title: opening.position,
+    department: clientName,
+    description: activities.join("\n") || null,
+
+    city,
+    state,
+    neighborhood: null,
+    region: "nenhuma",
+    zipCode,
+
+    workMode,
+    contractType,
+
+    salaryMin: Number.isFinite(salary) ? salary : null,
+    salaryMax: Number.isFinite(salary) ? salary : null,
+
+    status: contractType === "estagio" ? "open" : "draft",
+
+    educationRequired,
+    experienceRequired: null,
+    skillsRequired,
+    languagesRequired: [],
+
+    requirements: {
+      ...commonCriteria,
+      text: requirementsText,
+      department: cleanText(opening.department),
+      directManager: cleanText(opening.direct_manager),
+      workplaceAddress: cleanText(opening.workplace_address),
+      workSchedule: cleanText(opening.work_schedule),
+      breakTime: cleanText(opening.break_time),
+      desiredSkills: cleanText(opening.desired_skills),
+      softSkills: cleanText(opening.soft_skills),
+      benefits: {
+        transport: cleanText(opening.transport_benefit),
+        meal: cleanText(opening.meal_benefit),
+        lifeInsurance: Boolean(opening.life_insurance),
+        other: cleanText(opening.other_benefits),
+      },
+      sla: {
+        firstCandidates: cleanText(opening.sla_first_candidates),
+        interviews: cleanText(opening.sla_interviews),
+        closing: cleanText(opening.sla_closing),
+      },
+    },
+
+    filters: commonCriteria,
+
+    aiCriteria: {
+      ...commonCriteria,
+      raw: requirementsText,
+      title: opening.position,
+      desiredSkills: cleanText(opening.desired_skills),
+      softSkills: cleanText(opening.soft_skills),
+      activities,
+      workplaceAddress: cleanText(opening.workplace_address),
+      directManager: cleanText(opening.direct_manager),
+      updatedAt: new Date().toISOString(),
+      matcherVersion: "zentra-rh-job-criteria-v2",
+    },
+  };
+}
+
 function normalizeOpening(opening: any) {
   return {
     id: opening.id,
@@ -399,63 +612,9 @@ export async function PATCH(req: NextRequest) {
         );
       }
 
-      let jobId = opening.job_id;
-
-      if (!jobId) {
-        const client = opening.client;
-        const contractType =
-          opening.contract_type === "CLT"
-            ? "clt"
-            : "estagio";
-
-        const job = await prisma.job.create({
-          data: {
-            company_id: companyId,
-            branch_id: branchId || opening.branch_id || null,
-            client_id: opening.client_id,
-            opening_id: opening.id,
-            title: opening.position,
-            description: (opening.activities || []).join("\n"),
-            department: opening.department,
-            city: client.city,
-            state: client.state,
-            zipCode: client.cep,
-            workMode: opening.work_mode?.toLowerCase() || null,
-            contractType,
-            salaryMin: opening.remuneration,
-            salaryMax: opening.remuneration,
-            educationRequired: opening.education_required,
-            skillsRequired: String(opening.required_skills || "")
-              .split(",")
-              .map((item) => item.trim())
-              .filter(Boolean),
-            status: "draft",
-            requirements: {
-              source: "rh_job_opening",
-              clientId: opening.client_id,
-              openingId: opening.id,
-              workSchedule: opening.work_schedule,
-              breakTime: opening.break_time,
-              directManager: opening.direct_manager,
-              desiredSkills: opening.desired_skills,
-              softSkills: opening.soft_skills,
-              benefits: {
-                transport: opening.transport_benefit,
-                meal: opening.meal_benefit,
-                lifeInsurance: opening.life_insurance,
-                other: opening.other_benefits,
-              },
-            },
-          },
-        });
-
-        jobId = job.id;
-      }
-
       await prisma.rh_job_openings.update({
         where: { id },
         data: {
-          job_id: jobId,
           status: "approved",
           approved_at: new Date(),
         },
@@ -465,9 +624,67 @@ export async function PATCH(req: NextRequest) {
         where: {
           id: opening.client_id,
           company_id: companyId,
+          rh_pipeline_stage: {
+            not: "CONTRATO_ASSINADO_ATIVO",
+          },
         },
         data: {
           rh_pipeline_stage: "AGUARDANDO_CONTRATO",
+        },
+      });
+    } else if (action === "generate_job") {
+      if (
+        !["approved", "contract_generated", "contract_sent", "signed"].includes(
+          opening.status
+        )
+      ) {
+        return NextResponse.json(
+          { error: "Aprove a Ficha de Abertura antes de gerar a vaga." },
+          { status: 409 }
+        );
+      }
+
+      const jobData = buildJobDataFromOpening(
+        opening,
+        companyId,
+        branchId || opening.branch_id || null
+      );
+
+      let jobId = opening.job_id;
+
+      if (jobId) {
+        const existingJob = await prisma.job.findFirst({
+          where: {
+            id: jobId,
+            company_id: companyId,
+          },
+          select: {
+            id: true,
+          },
+        });
+
+        if (existingJob) {
+          await prisma.job.update({
+            where: { id: existingJob.id },
+            data: jobData,
+          });
+        } else {
+          jobId = null;
+        }
+      }
+
+      if (!jobId) {
+        const createdJob = await prisma.job.create({
+          data: jobData,
+        });
+
+        jobId = createdJob.id;
+      }
+
+      await prisma.rh_job_openings.update({
+        where: { id },
+        data: {
+          job_id: jobId,
         },
       });
     } else if (action === "generate_contract") {

@@ -50,6 +50,16 @@ function normalizeLookupPhone(value: any) {
   return String(value || "").replace(/\D/g, "");
 }
 
+
+function normalizeHiringContractType(value: any) {
+  const raw = clean(value).toLowerCase();
+  if (raw.includes("est")) return "Estágio";
+  if (raw.includes("pj")) return "PJ";
+  if (raw.includes("tempor")) return "Temporário";
+  if (raw.includes("aprendiz")) return "Jovem Aprendiz";
+  return "CLT";
+}
+
 async function attachCandidateResumes(
   presentations: any[],
   companyId: string
@@ -259,6 +269,38 @@ async function createHiringFromClientApproval({
   // IMPORTANTE:
   // Usar somente colunas que a tela/API de contratações já usa em rh_hirings.
   // Não enviar phone, email, start_date ou meeting_url, porque podem não existir na tabela.
+  let sourceContractType = "";
+
+  if (jobId) {
+    const sourceJob = await prisma.job.findFirst({
+      where: {
+        id: jobId,
+        company_id: companyId,
+      },
+      select: {
+        contractType: true,
+        opening_id: true,
+      },
+    });
+
+    sourceContractType = clean(sourceJob?.contractType);
+
+    if (sourceJob?.opening_id) {
+      const sourceOpening = await prisma.rh_job_openings.findFirst({
+        where: {
+          id: sourceJob.opening_id,
+          company_id: companyId,
+        },
+        select: {
+          contract_type: true,
+        },
+      });
+
+      sourceContractType =
+        clean(sourceOpening?.contract_type) || sourceContractType;
+    }
+  }
+
   const now = new Date().toISOString();
 
   const payload: any = {
@@ -275,7 +317,7 @@ async function createHiringFromClientApproval({
 
     job_title: candidate.job_title || presentation.title || "Vaga",
     status: "pending_documents",
-    contract_type: "CLT",
+    contract_type: normalizeHiringContractType(sourceContractType),
     hired_at: now,
     notes: [
       "Criado automaticamente após aprovação do cliente na apresentação de candidatos.",

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import InternshipDocumentCenter from "@/components/rh/InternshipDocumentCenter";
 
 const STATUS_OPTIONS = [
   { value: "all", label: "Todos os status" },
@@ -66,6 +67,18 @@ const EMPTY_CONTRACT_DATA = {
   guardian_relationship: "",
   notes: "",
 };
+
+
+function isInternshipHiring(item: any, data?: any) {
+  const value =
+    data?.hiring_type ||
+    item?.contract_type ||
+    item?.contractType ||
+    item?.job?.contract_type ||
+    item?.job?.contractType ||
+    "";
+  return String(value).toLocaleLowerCase("pt-BR").includes("est");
+}
 
 function getRequiredContractFields(data: any) {
   const base = [
@@ -1774,6 +1787,17 @@ export default function HiringsPage() {
               </button>
             </div>
 
+            <InternshipDocumentCenter
+              hiring={{
+                ...activeHiring,
+                contract_type:
+                  contractData?.hiring_type ||
+                  activeHiring?.contract_type ||
+                  activeHiring?.contractType,
+              }}
+            />
+
+            {!isInternshipHiring(activeHiring, contractData) && (
             <section style={styles.contractSection}>
               <div style={styles.headerRow}>
                 <div>
@@ -1926,6 +1950,7 @@ export default function HiringsPage() {
                 </>
               )}
             </section>
+            )}
 
             <h3 style={styles.subheading}>Checklist documental</h3>
 

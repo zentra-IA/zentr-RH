@@ -157,7 +157,7 @@ export default function ClientsPage() {
       alert(
         wasEditing
           ? "Cliente atualizado."
-          : "Cliente cadastrado. Agora preencha a Ficha de Abertura da primeira vaga."
+          : "Cliente cadastrado. Confira o Contrato de Prestação e depois preencha a Ficha de Abertura da primeira vaga."
       );
     } finally {
       setSaving(false);

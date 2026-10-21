@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { requireCompany } from "@/lib/server-company";
 import { z } from "zod";
+import { prisma } from "@/lib/prisma";
 
 export const dynamic = "force-dynamic";
 
@@ -32,7 +33,7 @@ const contractDataSchema = z.object({
   guardian_relationship: z.string().optional().default(""),
   notes: z.string().optional().default(""),
   completion_percent: z.number().int().min(0).max(100).optional().default(0),
-});
+}).passthrough();
 
 const patchSchema = z.object({
   hiringId: z.string().min(1),
@@ -66,6 +67,162 @@ async function assertHiring(
   if (!data) throw new Error("Contratação não encontrada.");
 }
 
+function firstValue(...values: any[]) {
+  return values.find(
+    (value) =>
+      value !== null &&
+      value !== undefined &&
+      String(value).trim() !== ""
+  ) ?? "";
+}
+
+function normalizeHiringType(value: any) {
+  const raw = String(value || "").trim();
+  const lower = raw.toLowerCase();
+  if (lower.includes("est")) return "Estágio";
+  if (lower.includes("clt")) return "CLT";
+  return raw;
+}
+
+async function buildAutomaticContractData(
+  supabase: ReturnType<typeof getSupabase>,
+  companyId: string,
+  hiringId: string
+) {
+  const { data: hiring, error: hiringError } = await supabase
+    .from("rh_hirings")
+    .select("*")
+    .eq("company_id", companyId)
+    .eq("id", hiringId)
+    .maybeSingle();
+
+  if (hiringError) throw hiringError;
+  if (!hiring) throw new Error("Contratação não encontrada.");
+
+  let candidate: any = null;
+
+  if (hiring.candidate_id) {
+    candidate = await prisma.candidateProfile.findFirst({
+      where: {
+        id: hiring.candidate_id,
+        company_id: companyId,
+      },
+    });
+  }
+
+  if (!candidate && (hiring.candidate_email || hiring.candidate_phone)) {
+    candidate = await prisma.candidateProfile.findFirst({
+      where: {
+        company_id: companyId,
+        OR: [
+          ...(hiring.candidate_email
+            ? [{ email: { equals: hiring.candidate_email, mode: "insensitive" as const } }]
+            : []),
+          ...(hiring.candidate_phone
+            ? [
+                { phone: hiring.candidate_phone },
+                { mobile: hiring.candidate_phone },
+              ]
+            : []),
+        ],
+      },
+      orderBy: { updatedAt: "desc" },
+    });
+  }
+
+  const job = hiring.job_id
+    ? await prisma.job.findFirst({
+        where: { id: hiring.job_id, company_id: companyId },
+      })
+    : null;
+
+  const openingId = firstValue(job?.opening_id, hiring.opening_id);
+  const opening = openingId
+    ? await prisma.rh_job_openings.findFirst({
+        where: { id: openingId, company_id: companyId },
+      })
+    : null;
+
+  const clientId = firstValue(job?.client_id, opening?.client_id);
+  const client = clientId
+    ? await prisma.company_contacts.findFirst({
+        where: { id: clientId, company_id: companyId },
+      })
+    : null;
+
+  const activities = Array.isArray(opening?.activities)
+    ? opening.activities.filter(Boolean).join("\n")
+    : "";
+
+  // A origem da vaga prevalece sobre registros legados de contratação.
+  // Isso corrige contratações de estágio antigas que foram gravadas como CLT.
+  const contractType = firstValue(
+    opening?.contract_type,
+    job?.contractType,
+    hiring.contract_type
+  );
+
+  const openingContractType = String(opening?.contract_type || "").toUpperCase();
+  const candidateEducation = String(candidate?.education || "").toLowerCase();
+
+  const internshipSubtype =
+    openingContractType.includes("SUPERIOR")
+      ? "higher_education"
+      : candidateEducation.includes("técn") || candidateEducation.includes("tecn")
+        ? "technical"
+        : openingContractType.includes("ESTAGIO")
+          ? "high_school"
+          : "";
+
+  return {
+    hiring_type: normalizeHiringType(contractType),
+    internship_subtype: internshipSubtype,
+
+    rg_number: firstValue(candidate?.rg),
+    candidate_rg: firstValue(candidate?.rg),
+    candidate_cpf: firstValue(candidate?.cpf),
+    candidate_birth_date: candidate?.birthDate
+      ? candidate.birthDate.toISOString().slice(0, 10)
+      : "",
+    candidate_address: firstValue(candidate?.address),
+    candidate_neighborhood: firstValue(candidate?.neighborhood),
+    candidate_city: firstValue(candidate?.city),
+    candidate_state: firstValue(candidate?.state),
+    candidate_zip: firstValue(candidate?.zipCode),
+
+    institution_name: firstValue(candidate?.institution),
+    course_name: firstValue(candidate?.course),
+    education_level: firstValue(candidate?.education),
+
+    internship_start: firstValue(hiring.contract_start),
+    internship_end: firstValue(hiring.contract_end),
+    work_schedule: firstValue(opening?.work_schedule),
+    break_time: firstValue(opening?.break_time),
+    scholarship_amount: firstValue(hiring.salary, opening?.remuneration),
+    transport_benefit: firstValue(opening?.transport_benefit),
+    activities,
+
+    supervisor_name: firstValue(opening?.direct_manager),
+
+    company_name: firstValue(client?.company_name, client?.restaurant_name),
+    company_cnpj: firstValue(client?.cnpj, client?.document),
+    company_address: firstValue(client?.address),
+    company_city: firstValue(client?.city),
+    company_state: firstValue(client?.state),
+    company_zip: firstValue(client?.cep),
+    company_phone: firstValue(client?.phone, client?.whatsapp),
+    company_email: firstValue(client?.email),
+    company_representative: firstValue(client?.responsible_name, client?.owner_name),
+    company_representative_role: "",
+    company_complement: "",
+    company_neighborhood: "",
+
+    document_date: new Date().toISOString().slice(0, 10),
+    insurance_company: "PORTO SEGURO CIA DE SEGUROS GERAIS",
+    insurance_policy: "61.0862.98.000",
+  };
+}
+
 export async function GET(req: NextRequest) {
   try {
     const { companyId } = await requireCompany(req);
@@ -81,20 +238,30 @@ export async function GET(req: NextRequest) {
     const supabase = getSupabase();
     await assertHiring(supabase, companyId, hiringId);
 
-    const { data, error } = await supabase
-      .from("rh_hiring_contract_data")
-      .select("*")
-      .eq("company_id", companyId)
-      .eq("hiring_id", hiringId)
-      .maybeSingle();
+    const [automaticData, savedResult] = await Promise.all([
+      buildAutomaticContractData(supabase, companyId, hiringId),
+      supabase
+        .from("rh_hiring_contract_data")
+        .select("*")
+        .eq("company_id", companyId)
+        .eq("hiring_id", hiringId)
+        .maybeSingle(),
+    ]);
 
-    if (error) throw error;
+    if (savedResult.error) throw savedResult.error;
+
+    const saved = savedResult.data;
+    const mergedData = {
+      ...automaticData,
+      ...(saved?.data || {}),
+    };
 
     return NextResponse.json({
       success: true,
-      contractData: data?.data || null,
-      completionPercent: data?.completion_percent || 0,
-      updatedAt: data?.updated_at || null,
+      contractData: mergedData,
+      completionPercent: saved?.completion_percent || 0,
+      updatedAt: saved?.updated_at || null,
+      autoFilled: automaticData,
     });
   } catch (error: any) {
     console.error("GET CONTRACT DATA ERROR:", error);

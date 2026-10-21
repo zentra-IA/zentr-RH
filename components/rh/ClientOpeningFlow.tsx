@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import ClientServiceContractPanel from "@/components/rh/ClientServiceContractPanel";
 
 export type RhClientSummary = {
   id: string;
@@ -264,6 +265,20 @@ export default function ClientOpeningFlow({
   }
 
 
+  async function generateJob(opening: Opening) {
+    const isUpdate = Boolean(opening.jobId);
+    const ok = await runAction(opening, "generate_job");
+
+    if (ok) {
+      alert(
+        isUpdate
+          ? "Vaga atualizada com todos os dados disponíveis na Ficha de Abertura."
+          : "Vaga gerada com todos os dados disponíveis na Ficha de Abertura."
+      );
+    }
+  }
+
+
   async function uploadSignedContract(
     opening: Opening,
     file: File | null
@@ -381,7 +396,7 @@ export default function ClientOpeningFlow({
       <div style={styles.panelHeader}>
         <div>
           <p style={styles.kicker}>Fluxo documental</p>
-          <h2 style={styles.title}>Nova Ficha de Abertura de Vaga</h2>
+          <h2 style={styles.title}>Contrato do cliente + Ficha de Abertura</h2>
           <p style={styles.subtitle}>
             Cliente: <b>{client.companyName || client.name}</b>
             {client.cnpj ? ` • CNPJ ${client.cnpj}` : ""}
@@ -398,6 +413,15 @@ export default function ClientOpeningFlow({
         <span><b>E-mail:</b> {client.email || "-"}</span>
         <span><b>Telefone:</b> {client.whatsapp || client.phone || "-"}</span>
         <span><b>Endereço:</b> {clientAddress || "-"}</span>
+      </div>
+
+      <ClientServiceContractPanel client={client} />
+
+      <div style={{ marginTop: 22 }}>
+        <p style={styles.kicker}>2. Processo por vaga</p>
+        <h3 style={{ margin: "6px 0 0", fontSize: 20 }}>
+          Ficha de Abertura de Vaga
+        </h3>
       </div>
 
       <form onSubmit={saveOpening} style={styles.form}>
@@ -531,7 +555,7 @@ export default function ClientOpeningFlow({
         <div>
           <h3 style={styles.subheading}>Fichas deste cliente</h3>
           <p style={styles.subtitle}>
-            Cada solicitação possui ficha, contrato e status próprios.
+            Cada vaga possui sua Ficha de Abertura. Em estágio, o Contrato de Prestação é do cliente e fica no topo desta tela.
           </p>
         </div>
         <button type="button" style={styles.secondaryButton} onClick={loadOpenings}>
@@ -611,10 +635,39 @@ export default function ClientOpeningFlow({
                     style={styles.primaryButton}
                     onClick={() => runAction(opening, "approve_sheet")}
                   >
-                    Aprovar ficha e criar vaga
+                    Aprovar ficha
                   </button>
                 )}
 
+                {["approved", "contract_generated", "contract_sent", "signed"].includes(
+                  opening.status
+                ) && (
+                  <button
+                    type="button"
+                    disabled={busy}
+                    style={styles.successButton}
+                    onClick={() => generateJob(opening)}
+                  >
+                    {opening.jobId
+                      ? "Atualizar vaga com dados da ficha"
+                      : "Gerar vaga"}
+                  </button>
+                )}
+
+                {opening.jobId && (
+                  <button
+                    type="button"
+                    style={styles.secondaryButton}
+                    onClick={() => {
+                      window.location.href = "/crm/dashboard/jobs";
+                    }}
+                  >
+                    Abrir vaga
+                  </button>
+                )}
+
+                {!isInternshipOpening(opening) && (
+                  <>
                 {["approved", "contract_generated", "contract_sent", "signed"].includes(
                   opening.status
                 ) && (
@@ -677,7 +730,24 @@ export default function ClientOpeningFlow({
                     ✓ Vaga liberada para recrutamento
                   </span>
                 )}
+                  </>
+                )}
+
+                {isInternshipOpening(opening) &&
+                  ["approved", "contract_generated", "contract_sent", "signed"].includes(
+                    opening.status
+                  ) && (
+                    <span style={styles.release}>
+                      {opening.jobId
+                        ? "✓ Vaga de estágio gerada e vinculada à Ficha de Abertura."
+                        : "✓ Ficha aprovada. Clique em Gerar vaga para levar os dados ao recrutamento."}
+                    </span>
+                  )}
               </div>
+
+              {!isInternshipOpening(opening) && (
+                <>
+
 
               {["contract_generated", "contract_sent", "signed"].includes(
                 opening.status
@@ -772,6 +842,7 @@ export default function ClientOpeningFlow({
                     </div>
                   )}
                 </div>
+              )}                </>
               )}
             </article>
           );
@@ -779,6 +850,10 @@ export default function ClientOpeningFlow({
       </div>
     </section>
   );
+}
+
+function isInternshipOpening(opening: Opening) {
+  return opening.contractType !== "CLT";
 }
 
 function contractTypeLabel(type: ContractType) {
