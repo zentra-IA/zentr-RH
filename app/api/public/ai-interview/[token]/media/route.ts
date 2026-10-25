@@ -1,4 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
+import {
+  assertSessionPath, checkAiMedia, createAiMediaPath,
+  downloadAiMedia, normalizeMime, storeAiMediaFallback,
+} from "@/lib/ai-interview-media";
 import { clean, findJobByInterviewToken, prisma } from "@/lib/ai-interview";
 
 export const runtime = "nodejs";
@@ -16,34 +20,59 @@ export async function POST(
       return NextResponse.json({ error: "Entrevista não encontrada." }, { status: 404 });
     }
 
-    const form = await req.formData();
-    const sessionToken = clean(form.get("sessionToken"));
-    const kind = clean(form.get("kind"));
-    const file = form.get("file");
+    const isJson = req.headers.get("content-type")?.includes("application/json");
+    const body = isJson ? await req.json() : await req.formData();
+    const sessionToken = clean(isJson ? body.sessionToken : body.get("sessionToken"));
+    const kind = clean(isJson ? body.kind : body.get("kind"));
+    const uploadedPath = isJson ? clean(body.storagePath) : "";
+    const originalFile = isJson ? null : body.get("file");
 
-    if (!sessionToken || !(file instanceof File) || !["audio", "video"].includes(kind)) {
+    if (!sessionToken || !["audio", "video"].includes(kind) ||
+        (isJson ? !uploadedPath : !(originalFile instanceof File))) {
       return NextResponse.json(
         { error: "Sessão, tipo e arquivo são obrigatórios." },
         { status: 400 }
       );
     }
+    const typedKind = kind as "audio" | "video";
 
-    const rows = await prisma.$queryRawUnsafe<any[]>(
-      `
-      SELECT id
-      FROM candidate_ai_interview_sessions
-      WHERE session_token = $1
-        AND company_id = $2::uuid
-        AND job_id = $3
+    const rows = await prisma.$queryRaw<any[]>`
+      SELECT "id", "status"
+      FROM "candidate_ai_interview_sessions"
+      WHERE "session_token" = ${sessionToken}
+        AND "company_id"::text = ${String(job.company_id)}::text
+        AND "job_id"::text = ${String(job.id)}::text
       LIMIT 1
-      `,
-      sessionToken,
-      job.company_id,
-      job.id
-    );
+    `;
 
-    if (!rows.length) {
+    const session = rows[0];
+    if (!session) {
       return NextResponse.json({ error: "Sessão inválida." }, { status: 404 });
+    }
+    if (session.status === "completed") {
+      return NextResponse.json({ error: "Entrevista já concluída." }, { status: 409 });
+    }
+
+    let file: File;
+    let storagePath: string;
+
+    if (isJson) {
+      storagePath = assertSessionPath(
+        uploadedPath, String(job.company_id), String(session.id), typedKind
+      );
+      const stored = await downloadAiMedia(storagePath);
+      const name = String(body.fileName || `${kind}.webm`).slice(0, 180);
+      const mime = normalizeMime(stored.mime, name);
+      checkAiMedia(typedKind, mime, stored.bytes.byteLength);
+      file = new File([stored.bytes], name, { type: mime });
+    } else {
+      file = originalFile as File;
+      const mime = normalizeMime(file.type, file.name);
+      checkAiMedia(typedKind, mime, file.size);
+      storagePath = createAiMediaPath(
+        String(job.company_id), String(session.id), typedKind, mime
+      );
+      await storeAiMediaFallback(storagePath, file);
     }
 
     const apiKey = process.env.OPENAI_API_KEY;
@@ -67,15 +96,17 @@ export async function POST(
     const transcript = String(payload.text || "").trim();
 
     const column = kind === "audio" ? "audio_transcript" : "video_transcript";
+    const pathColumn = kind === "audio" ? "audio_storage_path" : "video_storage_path";
 
     await prisma.$executeRawUnsafe(
       `
       UPDATE candidate_ai_interview_sessions
-      SET ${column} = $1, updated_at = now()
+      SET ${column} = $1, ${pathColumn} = $3, updated_at = now()
       WHERE session_token = $2
       `,
       transcript,
-      sessionToken
+      sessionToken,
+      storagePath
     );
 
     return NextResponse.json({

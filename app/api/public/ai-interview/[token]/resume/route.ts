@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
+  assertSessionPath, checkAiMedia, createAiMediaPath,
+  downloadAiMedia, normalizeMime, storeAiMediaFallback,
+} from "@/lib/ai-interview-media";
+import {
   callOpenAIJson,
   clean,
   findJobByInterviewToken,
@@ -131,38 +135,57 @@ export async function POST(
       return NextResponse.json({ error: "Entrevista não encontrada." }, { status: 404 });
     }
 
-    const form = await req.formData();
-    const sessionToken = clean(form.get("sessionToken"));
-    const file = form.get("file");
+    const isJson = req.headers.get("content-type")?.includes("application/json");
+    const body = isJson ? await req.json() : await req.formData();
+    const sessionToken = clean(isJson ? body.sessionToken : body.get("sessionToken"));
+    const uploadedPath = isJson ? clean(body.storagePath) : "";
+    const originalFile = isJson ? null : body.get("file");
 
-    if (!sessionToken || !(file instanceof File)) {
-      return NextResponse.json(
-        { error: "Sessão e currículo são obrigatórios." },
-        { status: 400 }
-      );
+    if (!sessionToken || (isJson ? !uploadedPath : !(originalFile instanceof File))) {
+      return NextResponse.json({ error: "Sessão e currículo são obrigatórios." }, { status: 400 });
     }
 
-    const sessionRows = await prisma.$queryRawUnsafe<any[]>(
-      `
+    const sessionRows = await prisma.$queryRaw<any[]>`
       SELECT *
-      FROM candidate_ai_interview_sessions
-      WHERE session_token = $1
-        AND company_id = $2::uuid
-        AND job_id = $3
+      FROM "candidate_ai_interview_sessions"
+      WHERE "session_token" = ${sessionToken}
+        AND "company_id"::text = ${String(job.company_id)}::text
+        AND "job_id"::text = ${String(job.id)}::text
       LIMIT 1
-      `,
-      sessionToken,
-      job.company_id,
-      job.id
-    );
+    `;
 
     if (!sessionRows.length) {
       return NextResponse.json({ error: "Sessão inválida." }, { status: 404 });
     }
 
-    const resume = await extractResumeWithOpenAI(file);
     const session = sessionRows[0];
+    if (session.status === "completed") {
+      return NextResponse.json({ error: "A entrevista já foi concluída." }, { status: 409 });
+    }
 
+    let file: File;
+    let storagePath: string;
+
+    if (isJson) {
+      storagePath = assertSessionPath(
+        uploadedPath, String(job.company_id), String(session.id), "resume"
+      );
+      const media = await downloadAiMedia(storagePath);
+      const declaredName = String(body.fileName || "curriculo.pdf").slice(0, 180);
+      const mime = normalizeMime(media.mime, declaredName);
+      checkAiMedia("resume", mime, media.bytes.byteLength);
+      file = new File([media.bytes], declaredName, { type: mime });
+    } else {
+      file = originalFile as File;
+      const mime = normalizeMime(file.type, file.name);
+      checkAiMedia("resume", mime, file.size);
+      storagePath = createAiMediaPath(
+        String(job.company_id), String(session.id), "resume", mime
+      );
+      await storeAiMediaFallback(storagePath, file);
+    }
+
+    const resume = await extractResumeWithOpenAI(file);
     const cpf = clean(resume.cpf);
     const email = clean(resume.email || session.candidate_email).toLowerCase();
     const phone = clean(resume.phone || session.candidate_phone);
@@ -292,6 +315,7 @@ Retorne:
         candidate_email = NULLIF($3, ''),
         candidate_phone = $4,
         resume_file_name = $5,
+        resume_storage_path = $10,
         resume_text = $6,
         resume_data = $7::jsonb,
         questions = $8::jsonb,
@@ -307,7 +331,8 @@ Retorne:
       clean(resume.resumeText || resume.professionalSummary),
       JSON.stringify(resume),
       JSON.stringify(questions),
-      sessionToken
+      sessionToken,
+      storagePath
     );
 
     return NextResponse.json({

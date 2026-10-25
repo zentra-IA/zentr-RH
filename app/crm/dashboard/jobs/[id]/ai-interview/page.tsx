@@ -27,6 +27,9 @@ export default function AiInterviewResultsPage({
   const [selected, setSelected] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState("");
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [deleting, setDeleting] = useState(false);
+
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("all");
   const [decision, setDecision] = useState("all");
@@ -54,10 +57,14 @@ export default function AiInterviewResultsPage({
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || "Erro ao carregar.");
       setJob(data.job);
-      setResults(data.results || []);
-      if (selected?.id) {
-        setSelected((data.results || []).find((x: any) => x.id === selected.id) || null);
-      }
+      const refreshed = Array.isArray(data.results) ? data.results : [];
+      setResults(refreshed);
+      setSelected((current: any) =>
+        current?.id ? refreshed.find((x: any) => x.id === current.id) || null : null
+      );
+      setSelectedIds((current) =>
+        current.filter((id) => refreshed.some((x: any) => x.id === id))
+      );
     } catch (error: any) {
       alert(error.message);
     } finally {
@@ -102,6 +109,45 @@ export default function AiInterviewResultsPage({
       alert(error.message);
     } finally {
       setSavingId("");
+    }
+  }
+
+  async function deleteInterviews(ids: string[]) {
+    const validIds = Array.from(new Set(ids.filter(Boolean)));
+    if (!validIds.length) return;
+
+    const message = validIds.length === 1
+      ? "Excluir esta entrevista da lista do RH?\n\nO cadastro principal do candidato e eventuais apresentações ao cliente serão preservados."
+      : `Excluir ${validIds.length} entrevistas selecionadas da lista?\n\nOs cadastros principais dos candidatos e eventuais apresentações ao cliente serão preservados.`;
+
+    if (!window.confirm(message)) return;
+
+    try {
+      setDeleting(true);
+      // máximo de 200 registros por chamada, inclusive se houver 500 filtrados
+      let removed = 0;
+      for (let start = 0; start < validIds.length; start += 200) {
+        const batch = validIds.slice(start, start + 200);
+        const res = await fetch(`/api/rh/jobs/${jobId}/ai-interview/results`, {
+          method: "DELETE",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sessionIds: batch }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || "Erro ao excluir entrevistas.");
+        removed += Number(data.removedCount || 0);
+      }
+      setSelected(null);
+      setSelectedIds([]);
+      await load();
+      alert(`${removed} entrevista(s) removida(s) da lista.`);
+    } catch (error: any) {
+      // O servidor confirma cada lote; atualiza a tela para refletir o estado real.
+      await load();
+      alert(error.message || "Erro ao excluir entrevistas.");
+    } finally {
+      setDeleting(false);
     }
   }
 
@@ -150,6 +196,24 @@ export default function AiInterviewResultsPage({
 
     return rows;
   }, [results, search, status, decision, minScore, maxScore, dateFrom, dateTo, sort]);
+
+  const allVisibleSelected =
+    visible.length > 0 && visible.every((item) => selectedIds.includes(item.id));
+
+  function toggleAllVisible() {
+    const visibleIds = visible.map((item) => String(item.id));
+    setSelectedIds((current) =>
+      allVisibleSelected
+        ? current.filter((id) => !visibleIds.includes(id))
+        : Array.from(new Set([...current, ...visibleIds]))
+    );
+  }
+
+  function toggleOne(id: string) {
+    setSelectedIds((current) =>
+      current.includes(id) ? current.filter((value) => value !== id) : [...current, id]
+    );
+  }
 
   function clearFilters() {
     setSearch("");
@@ -218,10 +282,27 @@ export default function AiInterviewResultsPage({
       </section>
 
       <section style={styles.card}>
+        <div style={styles.bulkToolbar}>
+          <label style={styles.selectionLabel}>
+            <input type="checkbox" checked={allVisibleSelected}
+              onChange={toggleAllVisible} disabled={deleting || !visible.length} />
+            Selecionar todos os {visible.length} resultado(s) filtrado(s)
+          </label>
+          <strong style={styles.muted}>{selectedIds.length} selecionado(s)</strong>
+          <button style={styles.danger}
+            disabled={!selectedIds.length || deleting}
+            onClick={() => deleteInterviews(selectedIds)}>
+            {deleting ? "Excluindo..." : `Excluir selecionados (${selectedIds.length})`}
+          </button>
+        </div>
+        <p style={{ ...styles.muted, margin: "0 0 14px" }}>
+          Excluir remove apenas as entrevistas desta listagem; currículos e apresentações ao cliente continuam no sistema.
+        </p>
         <div style={{ overflowX: "auto" }}>
           <table style={styles.table}>
             <thead>
               <tr>
+                <th style={styles.th}>Selecionar</th>
                 <th style={styles.th}>Candidato</th>
                 <th style={styles.th}>Data</th>
                 <th style={styles.th}>Currículo</th>
@@ -237,6 +318,12 @@ export default function AiInterviewResultsPage({
                 const b = scoreBadge(score);
                 return (
                   <tr key={item.id}>
+                    <td style={styles.td}>
+                      <input aria-label={`Selecionar ${item.candidate_name || "candidato"}`}
+                        type="checkbox" checked={selectedIds.includes(item.id)}
+                        disabled={deleting}
+                        onChange={() => toggleOne(item.id)} />
+                    </td>
                     <td style={styles.td}>
                       <strong>{item.candidate_name || "Candidato"}</strong>
                       <div style={styles.muted}>{item.candidate_phone || item.candidate_email || ""}</div>
@@ -266,23 +353,28 @@ export default function AiInterviewResultsPage({
                             ✓ Aprovar p/ cliente
                           </button>
                         )}
-                        {item.status === "completed" && item.rh_decision !== "rejected" && (
+                        {item.status === "completed" && item.rh_decision !== "rejected" && item.rh_decision !== "approved" && (
                           <button style={styles.reject} disabled={savingId === item.id} onClick={() => decide(item, "rejected")}>
                             ✕ Reprovar
                           </button>
                         )}
-                        {item.rh_decision && (
+                        {item.rh_decision === "rejected" && (
                           <button style={styles.linkButton} disabled={savingId === item.id} onClick={() => decide(item, "reset")}>
                             Desfazer decisão
                           </button>
                         )}
+                        <button style={styles.dangerOutline}
+                          disabled={deleting || savingId === item.id}
+                          onClick={() => deleteInterviews([item.id])}>
+                          Excluir
+                        </button>
                       </div>
                     </td>
                   </tr>
                 );
               })}
               {!visible.length && (
-                <tr><td colSpan={7} style={{ ...styles.td, textAlign: "center", color: "#64748b" }}>Nenhum candidato encontrado com estes filtros.</td></tr>
+                <tr><td colSpan={8} style={{ ...styles.td, textAlign: "center", color: "#64748b" }}>Nenhum candidato encontrado com estes filtros.</td></tr>
               )}
             </tbody>
           </table>
@@ -312,9 +404,11 @@ export default function AiInterviewResultsPage({
               <button style={styles.approve} disabled={savingId === selected.id} onClick={() => decide(selected, "approved")}>
                 ✓ Aprovar e enviar ao cliente
               </button>
-              <button style={styles.reject} disabled={savingId === selected.id} onClick={() => decide(selected, "rejected")}>
-                ✕ Reprovar no RH
-              </button>
+              {selected.rh_decision !== "approved" && (
+                <button style={styles.reject} disabled={savingId === selected.id} onClick={() => decide(selected, "rejected")}>
+                  ✕ Reprovar no RH
+                </button>
+              )}
             </div>
           )}
         </section>
@@ -429,6 +523,10 @@ const styles: Record<string, React.CSSProperties> = {
   reject: { border: 0, borderRadius: 10, padding: "9px 12px", background: "#ef4444", color: "#fff", fontWeight: 900, cursor: "pointer" },
   linkButton: { border: 0, background: "transparent", color: "#64748b", textDecoration: "underline", cursor: "pointer", fontWeight: 700 },
   actions: { display: "flex", gap: 7, flexWrap: "wrap" },
+  bulkToolbar: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginBottom: 12 },
+  selectionLabel: { display: "inline-flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 800, cursor: "pointer" },
+  danger: { background: "#dc2626", color: "#fff", border: 0, borderRadius: 10, padding: "10px 14px", fontWeight: 900, cursor: "pointer" },
+  dangerOutline: { background: "#fff", color: "#b91c1c", border: "1px solid #fecaca", borderRadius: 10, padding: "9px 12px", fontWeight: 800, cursor: "pointer" },
   stats: { display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(145px,1fr))", gap: 12, marginBottom: 18 },
   stat: { background: "#fff", border: "1px solid #e2e8f0", borderRadius: 16, padding: 16, display: "grid", gap: 6 },
   card: { background: "#fff", border: "1px solid #e2e8f0", borderRadius: 18, padding: 18, marginBottom: 18 },

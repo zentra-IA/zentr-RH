@@ -96,6 +96,32 @@ export default function AiInterviewPublicPage({
     }
   }
 
+  async function uploadInterviewFile(kind: "resume" | "audio" | "video", file: File) {
+    const signed = await fetch(`/api/public/ai-interview/${token}/upload`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        sessionToken, kind,
+        fileName: file.name,
+        contentType: file.type,
+        size: file.size,
+      }),
+    });
+    const authorization = await signed.json().catch(() => ({}));
+    if (!signed.ok) throw new Error(authorization.error || "Não foi possível preparar o envio do arquivo.");
+
+    const upload = await fetch(authorization.uploadUrl, {
+      method: "PUT",
+      headers: { "Content-Type": authorization.mime || file.type || "application/octet-stream" },
+      body: file,
+    });
+    if (!upload.ok) {
+      const details = await upload.text().catch(() => "");
+      throw new Error(`Falha ao guardar arquivo (${upload.status}). ${details.slice(0, 180)}`);
+    }
+    return authorization.storagePath as string;
+  }
+
   async function sendResume() {
     if (!resumeFile) {
       alert("Anexe seu currículo.");
@@ -104,13 +130,15 @@ export default function AiInterviewPublicPage({
 
     try {
       setBusy(true);
-      const fd = new FormData();
-      fd.append("sessionToken", sessionToken);
-      fd.append("file", resumeFile);
-
+      const storagePath = await uploadInterviewFile("resume", resumeFile);
       const res = await fetch(`/api/public/ai-interview/${token}/resume`, {
         method: "POST",
-        body: fd,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sessionToken,
+          storagePath,
+          fileName: resumeFile.name,
+        }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || "Erro ao analisar currículo.");
@@ -154,14 +182,13 @@ export default function AiInterviewPublicPage({
   async function sendMedia(kind: "audio" | "video", file: File) {
     try {
       setBusy(true);
-      const fd = new FormData();
-      fd.append("sessionToken", sessionToken);
-      fd.append("kind", kind);
-      fd.append("file", file);
-
+      const storagePath = await uploadInterviewFile(kind, file);
       const res = await fetch(`/api/public/ai-interview/${token}/media`, {
         method: "POST",
-        body: fd,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sessionToken, kind, storagePath, fileName: file.name,
+        }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || "Erro ao transcrever a gravação.");

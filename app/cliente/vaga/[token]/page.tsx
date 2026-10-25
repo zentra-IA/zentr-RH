@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import ClientInterviewMedia from "@/components/ai-interview/ClientInterviewMedia";
 import { useParams } from "next/navigation";
 
 type Candidate = {
@@ -145,10 +146,10 @@ export default function PublicCandidatePresentationPage() {
                 <span>Entrevista: {formatDate(candidate.interview_at)}</span>
                 {candidate.resume_file_url ? (
                   <a className="resume-link" href={candidate.resume_file_url} target="_blank" rel="noopener noreferrer">Ver currículo</a>
-                ) : (
-                  <span className="resume-unavailable">Currículo original não disponível</span>
-                )}
+                ) : null}
               </div>
+
+              <ClientInterviewMedia token={token} memberId={candidate.id} />
 
               {candidate.ai_overall_score != null && (
                 <section className="ai-box">
