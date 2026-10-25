@@ -12,15 +12,14 @@ type Candidate = {
   resume_file_url?: string | null;
   interview_at?: string | null;
   rh_notes?: string | null;
-  attachments?: Array<{
-    name?: string | null;
-    url: string;
-    mediaType?: string | null;
-    mimeType?: string | null;
-    size?: number | null;
-  }>;
   client_notes?: string | null;
   status: string;
+  ai_resume_score?: number | null;
+  ai_interview_score?: number | null;
+  ai_overall_score?: number | null;
+  ai_recommendation?: string | null;
+  ai_report?: any;
+  ai_resume_data?: any;
 };
 
 type Presentation = {
@@ -35,11 +34,7 @@ function formatDate(value?: string | null) {
   if (!value) return "-";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "-";
-
-  return new Intl.DateTimeFormat("pt-BR", {
-    dateStyle: "short",
-    timeStyle: "short",
-  }).format(date);
+  return new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short" }).format(date);
 }
 
 function statusLabel(status: string) {
@@ -49,7 +44,6 @@ function statusLabel(status: string) {
     rejected_by_client: "Reprovado",
     sent_to_hiring: "Enviado para contratação",
   };
-
   return labels[status] || status;
 }
 
@@ -63,13 +57,7 @@ export default function PublicCandidatePresentationPage() {
   const [notes, setNotes] = useState<Record<string, string>>({});
   const [error, setError] = useState("");
 
-  const candidates = useMemo(
-    () =>
-      (presentation?.candidates || []).filter(
-        (candidate) => candidate.status === "waiting_client"
-      ),
-    [presentation]
-  );
+  const candidates = useMemo(() => presentation?.candidates || [], [presentation]);
 
   async function loadPresentation() {
     if (!token) {
@@ -81,18 +69,12 @@ export default function PublicCandidatePresentationPage() {
     try {
       setLoading(true);
       setError("");
-
-      const res = await fetch(`/api/public/candidate-presentation?token=${encodeURIComponent(token)}`, {
-        cache: "no-store",
-      });
-
+      const res = await fetch(`/api/public/candidate-presentation?token=${encodeURIComponent(token)}`, { cache: "no-store" });
       const data = await res.json().catch(() => ({}));
-
       if (!res.ok) {
         setError(data.error || "Não foi possível carregar os candidatos.");
         return;
       }
-
       setPresentation(data.presentation);
     } finally {
       setLoading(false);
@@ -101,17 +83,13 @@ export default function PublicCandidatePresentationPage() {
 
   async function decide(candidate: Candidate, decision: "approved" | "rejected") {
     const text = decision === "approved" ? "aprovar" : "reprovar";
-
     if (!confirm(`Deseja ${text} ${candidate.candidate_name}?`)) return;
 
     try {
       setSavingId(candidate.id);
-
       const res = await fetch("/api/public/candidate-presentation", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           token,
           candidateId: candidate.id,
@@ -119,49 +97,37 @@ export default function PublicCandidatePresentationPage() {
           notes: notes[candidate.id] || "",
         }),
       });
-
       const data = await res.json().catch(() => ({}));
-
       if (!res.ok) {
         alert(data.error || "Erro ao salvar decisão.");
         return;
       }
-
       await loadPresentation();
     } finally {
       setSavingId(null);
     }
   }
 
-  useEffect(() => {
-    loadPresentation();
-  }, [token]);
+  useEffect(() => { loadPresentation(); }, [token]);
 
   return (
     <main className="client-page">
       <section className="hero">
         <div className="badge">Seleção de candidatos</div>
         <h1>{presentation?.title || "Candidatos indicados"}</h1>
-        <p>
-          Avalie os candidatos abaixo e informe quem deve seguir para contratação.
-        </p>
+        <p>Avalie os candidatos abaixo e informe quem deve seguir para contratação.</p>
       </section>
 
       {loading && <div className="empty">Carregando candidatos...</div>}
-
       {!loading && error && <div className="error">{error}</div>}
-
-      {!loading && !error && candidates.length === 0 && (
-        <div className="empty">
-          Todos os candidatos deste link já foram avaliados ou não há candidatos pendentes.
-        </div>
-      )}
+      {!loading && !error && candidates.length === 0 && <div className="empty">Nenhum candidato disponível neste link.</div>}
 
       <section className="grid">
         {candidates.map((candidate) => {
-          const decided = ["approved_by_client", "rejected_by_client", "sent_to_hiring"].includes(
-            candidate.status
-          );
+          const decided = ["approved_by_client", "rejected_by_client", "sent_to_hiring"].includes(candidate.status);
+          const report = candidate.ai_report || {};
+          const resume = candidate.ai_resume_data || {};
+          const dimensions = report.dimensions || {};
 
           return (
             <article key={candidate.id} className="card">
@@ -170,50 +136,73 @@ export default function PublicCandidatePresentationPage() {
                   <h2>{candidate.candidate_name || "Candidato"}</h2>
                   <p>{candidate.job_title || presentation?.title || "Vaga"}</p>
                 </div>
-
                 <span className={`status ${candidate.status}`}>{statusLabel(candidate.status)}</span>
               </div>
 
               <div className="info">
-                {candidate.candidate_phone ? (
-                  <a
-                    className="contact-link whatsapp"
-                    href={`https://wa.me/${candidate.candidate_phone.replace(/\D/g, "")}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    WhatsApp: {candidate.candidate_phone}
-                  </a>
-                ) : (
-                  <span className="missing-info">WhatsApp não informado</span>
-                )}
-
-                {candidate.candidate_email ? (
-                  <a
-                    className="contact-link email"
-                    href={`mailto:${candidate.candidate_email}`}
-                  >
-                    E-mail: {candidate.candidate_email}
-                  </a>
-                ) : (
-                  <span className="missing-info">E-mail não informado</span>
-                )}
-                <span>Entrevista RH: {formatDate(candidate.interview_at)}</span>
+                {candidate.candidate_phone && <span>WhatsApp: {candidate.candidate_phone}</span>}
+                {candidate.candidate_email && <span>E-mail: {candidate.candidate_email}</span>}
+                <span>Entrevista: {formatDate(candidate.interview_at)}</span>
                 {candidate.resume_file_url ? (
-                  <a
-                    className="resume-link"
-                    href={candidate.resume_file_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    Ver currículo
-                  </a>
+                  <a className="resume-link" href={candidate.resume_file_url} target="_blank" rel="noopener noreferrer">Ver currículo</a>
                 ) : (
-                  <span className="resume-unavailable">
-                    Currículo não disponível
-                  </span>
+                  <span className="resume-unavailable">Currículo original não disponível</span>
                 )}
               </div>
+
+              {candidate.ai_overall_score != null && (
+                <section className="ai-box">
+                  <div className="ai-head">
+                    <div>
+                      <span>Análise profissional por IA</span>
+                      <strong>{candidate.ai_overall_score}% de aderência</strong>
+                    </div>
+                    <div className="score-row">
+                      <small>Currículo <b>{candidate.ai_resume_score ?? "—"}%</b></small>
+                      <small>Entrevista <b>{candidate.ai_interview_score ?? "—"}%</b></small>
+                    </div>
+                  </div>
+
+                  {report.summary && <p className="ai-summary">{report.summary}</p>}
+
+                  <div className="profile-grid">
+                    {resume.lastRole && <Info label="Último cargo" value={resume.lastRole} />}
+                    {(resume.education || resume.course) && <Info label="Formação" value={resume.education || resume.course} />}
+                    {(resume.city || resume.state) && <Info label="Localidade" value={[resume.city, resume.state].filter(Boolean).join(" / ")} />}
+                    {candidate.ai_recommendation && <Info label="Classificação" value={candidate.ai_recommendation} />}
+                  </div>
+
+                  {Object.keys(dimensions).length > 0 && (
+                    <div className="dimensions">
+                      {Object.entries(dimensions).slice(0, 8).map(([key, value]) => (
+                        <div key={key}><span>{key.replaceAll("_", " ")}</span><b>{String(value)}%</b></div>
+                      ))}
+                    </div>
+                  )}
+
+                  {Array.isArray(report.strengths) && report.strengths.length > 0 && (
+                    <div className="evidence">
+                      <strong>Pontos fortes</strong>
+                      {report.strengths.slice(0, 4).map((item: any, i: number) => (
+                        <p key={i}>• {item.title || item.evidence || String(item)}</p>
+                      ))}
+                    </div>
+                  )}
+
+                  {Array.isArray(report.attentionPoints) && report.attentionPoints.length > 0 && (
+                    <div className="evidence attention">
+                      <strong>Pontos de atenção</strong>
+                      {report.attentionPoints.slice(0, 3).map((item: any, i: number) => (
+                        <p key={i}>• {item.title || item.evidence || String(item)}</p>
+                      ))}
+                    </div>
+                  )}
+
+                  <small className="ai-disclaimer">
+                    A análise por IA organiza evidências profissionais da entrevista e do currículo como apoio à decisão.
+                  </small>
+                </section>
+              )}
 
               {candidate.rh_notes && (
                 <div className="notes">
@@ -222,82 +211,16 @@ export default function PublicCandidatePresentationPage() {
                 </div>
               )}
 
-              {Array.isArray(candidate.attachments) &&
-                candidate.attachments.length > 0 && (
-                  <div className="notes">
-                    <strong>Arquivos enviados pelo RH</strong>
-                    <div style={{ display: "grid", gap: 10, marginTop: 10 }}>
-                      {candidate.attachments.map((attachment, index) => {
-                        const type = attachment.mediaType || "";
-                        return (
-                          <div key={`${attachment.url}-${index}`}>
-                            {type === "image" ? (
-                              <a href={attachment.url} target="_blank" rel="noopener noreferrer">
-                                <img
-                                  src={attachment.url}
-                                  alt={attachment.name || "Imagem enviada pelo RH"}
-                                  style={{
-                                    width: "100%",
-                                    maxWidth: 420,
-                                    maxHeight: 260,
-                                    objectFit: "contain",
-                                    borderRadius: 10,
-                                    border: "1px solid #e5e7eb",
-                                  }}
-                                />
-                              </a>
-                            ) : type === "audio" ? (
-                              <div>
-                                <div style={{ marginBottom: 6 }}>
-                                  {attachment.name || "Áudio do RH"}
-                                </div>
-                                <audio controls src={attachment.url} style={{ width: "100%" }} />
-                              </div>
-                            ) : (
-                              <a
-                                className="resume-link"
-                                href={attachment.url}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                              >
-                                {attachment.name || "Abrir arquivo"}
-                              </a>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
-
               <textarea
                 disabled={decided}
                 placeholder="Observação para o RH, se necessário"
                 value={notes[candidate.id] ?? candidate.client_notes ?? ""}
-                onChange={(event) =>
-                  setNotes((current) => ({
-                    ...current,
-                    [candidate.id]: event.target.value,
-                  }))
-                }
+                onChange={(event) => setNotes((current) => ({ ...current, [candidate.id]: event.target.value }))}
               />
 
               <div className="actions">
-                <button
-                  disabled={decided || savingId === candidate.id}
-                  className="approve"
-                  onClick={() => decide(candidate, "approved")}
-                >
-                  Aprovar
-                </button>
-
-                <button
-                  disabled={decided || savingId === candidate.id}
-                  className="reject"
-                  onClick={() => decide(candidate, "rejected")}
-                >
-                  Reprovar
-                </button>
+                <button disabled={decided || savingId === candidate.id} className="approve" onClick={() => decide(candidate, "approved")}>Aprovar</button>
+                <button disabled={decided || savingId === candidate.id} className="reject" onClick={() => decide(candidate, "rejected")}>Reprovar</button>
               </div>
             </article>
           );
@@ -305,276 +228,57 @@ export default function PublicCandidatePresentationPage() {
       </section>
 
       <style jsx>{`
-        .client-page {
-          min-height: 100vh;
-          padding: 24px;
-          background: linear-gradient(135deg, #f8fafc, #eff6ff, #ffffff);
-          color: #0f172a;
-        }
-
-        .hero {
-          max-width: 980px;
-          margin: 0 auto 22px;
-          padding: 24px;
-          background: #ffffff;
-          border: 1px solid #dbeafe;
-          border-radius: 26px;
-          box-shadow: 0 20px 60px rgba(37, 99, 235, 0.08);
-        }
-
-        .badge {
-          display: inline-flex;
-          padding: 7px 12px;
-          border-radius: 999px;
-          background: #dbeafe;
-          color: #1d4ed8;
-          font-size: 12px;
-          font-weight: 900;
-          margin-bottom: 12px;
-        }
-
-        h1 {
-          margin: 0;
-          font-size: clamp(26px, 5vw, 42px);
-          line-height: 1.05;
-          letter-spacing: -0.04em;
-        }
-
-        .hero p {
-          color: #64748b;
-          font-weight: 700;
-          margin: 10px 0 0;
-        }
-
-        .grid {
-          max-width: 980px;
-          margin: 0 auto;
-          display: grid;
-          grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-          gap: 16px;
-        }
-
-        .card,
-        .empty,
-        .error {
-          background: #ffffff;
-          border: 1px solid #e2e8f0;
-          border-radius: 24px;
-          padding: 18px;
-          box-shadow: 0 15px 40px rgba(15, 23, 42, 0.06);
-        }
-
-        .empty,
-        .error {
-          max-width: 980px;
-          margin: 0 auto;
-          font-weight: 900;
-        }
-
-        .error {
-          border-color: #fecaca;
-          color: #b91c1c;
-          background: #fef2f2;
-        }
-
-        .card-header {
-          display: flex;
-          align-items: flex-start;
-          justify-content: space-between;
-          gap: 10px;
-          margin-bottom: 14px;
-        }
-
-        h2 {
-          margin: 0;
-          font-size: 20px;
-          letter-spacing: -0.03em;
-        }
-
-        .card-header p {
-          margin: 4px 0 0;
-          color: #64748b;
-          font-size: 13px;
-          font-weight: 800;
-        }
-
-        .status {
-          flex: 0 0 auto;
-          padding: 7px 10px;
-          border-radius: 999px;
-          font-size: 11px;
-          font-weight: 950;
-          background: #e0f2fe;
-          color: #0369a1;
-        }
-
-        .status.approved_by_client,
-        .status.sent_to_hiring {
-          background: #dcfce7;
-          color: #166534;
-        }
-
-        .status.rejected_by_client {
-          background: #fee2e2;
-          color: #991b1b;
-        }
-
-        .info {
-          display: grid;
-          gap: 7px;
-          color: #334155;
-          font-size: 13px;
-          font-weight: 750;
-          margin-bottom: 14px;
-        }
-
-        .info a {
-          font-weight: 950;
-        }
-
-        .contact-link {
-          display: inline-flex;
-          width: fit-content;
-          align-items: center;
-          gap: 6px;
-          padding: 7px 10px;
-          border-radius: 10px;
-          text-decoration: none;
-        }
-
-        .contact-link.whatsapp {
-          background: #dcfce7;
-          color: #166534;
-        }
-
-        .contact-link.email {
-          background: #eff6ff;
-          color: #1d4ed8;
-        }
-
-        .missing-info {
-          color: #94a3b8;
-          font-weight: 800;
-        }
-
-        .resume-link {
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          width: fit-content;
-          margin-top: 6px;
-          padding: 10px 14px;
-          border-radius: 12px;
-          background: #2563eb;
-          color: #ffffff;
-          font-weight: 900;
-          text-decoration: none;
-          transition: transform 0.15s ease, background 0.15s ease;
-        }
-
-        .resume-link:hover {
-          background: #1d4ed8;
-          transform: translateY(-1px);
-        }
-
-        .resume-unavailable {
-          display: inline-flex;
-          width: fit-content;
-          margin-top: 6px;
-          padding: 9px 12px;
-          border-radius: 12px;
-          background: #f1f5f9;
-          color: #64748b;
-          font-size: 13px;
-          font-weight: 800;
-        }
-
-        .notes {
-          padding: 12px;
-          border-radius: 18px;
-          background: #f8fafc;
-          border: 1px solid #e2e8f0;
-          margin-bottom: 12px;
-        }
-
-        .notes strong {
-          font-size: 12px;
-        }
-
-        .notes p {
-          margin: 6px 0 0;
-          color: #475569;
-          font-size: 13px;
-          line-height: 1.5;
-        }
-
-        textarea {
-          width: 100%;
-          min-height: 88px;
-          resize: vertical;
-          border: 1px solid #cbd5e1;
-          border-radius: 18px;
-          padding: 12px;
-          font: inherit;
-          font-size: 14px;
-          outline: none;
-          box-sizing: border-box;
-        }
-
-        textarea:focus {
-          border-color: #2563eb;
-          box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.12);
-        }
-
-        .actions {
-          display: grid;
-          grid-template-columns: 1fr 1fr;
-          gap: 10px;
-          margin-top: 12px;
-        }
-
-        button {
-          border: 0;
-          border-radius: 16px;
-          padding: 12px 14px;
-          font-weight: 950;
-          cursor: pointer;
-        }
-
-        button:disabled {
-          cursor: not-allowed;
-          opacity: 0.5;
-        }
-
-        .approve {
-          background: #16a34a;
-          color: #ffffff;
-        }
-
-        .reject {
-          background: #ef4444;
-          color: #ffffff;
-        }
-
-        @media (max-width: 640px) {
-          .client-page {
-            padding: 14px;
-          }
-
-          .hero,
-          .card {
-            border-radius: 20px;
-          }
-
-          .actions {
-            grid-template-columns: 1fr;
-          }
-
-          .card-header {
-            display: grid;
-          }
-        }
+        .client-page { min-height:100vh; padding:24px; background:linear-gradient(135deg,#f8fafc,#eff6ff,#fff); color:#0f172a; }
+        .hero { max-width:1120px; margin:0 auto 22px; padding:24px; background:#fff; border:1px solid #dbeafe; border-radius:26px; box-shadow:0 20px 60px rgba(37,99,235,.08); }
+        .badge { display:inline-flex; padding:7px 12px; border-radius:999px; background:#dbeafe; color:#1d4ed8; font-size:12px; font-weight:900; margin-bottom:12px; }
+        h1 { margin:0; font-size:clamp(26px,5vw,42px); line-height:1.05; letter-spacing:-.04em; }
+        .hero p { color:#64748b; font-weight:700; margin:10px 0 0; }
+        .grid { max-width:1120px; margin:0 auto; display:grid; grid-template-columns:repeat(auto-fit,minmax(360px,1fr)); gap:16px; }
+        .card,.empty,.error { background:#fff; border:1px solid #e2e8f0; border-radius:24px; padding:18px; box-shadow:0 15px 40px rgba(15,23,42,.06); }
+        .empty,.error { max-width:1120px; margin:0 auto; font-weight:900; }
+        .error { border-color:#fecaca; color:#b91c1c; background:#fef2f2; }
+        .card-header { display:flex; align-items:flex-start; justify-content:space-between; gap:10px; margin-bottom:14px; }
+        h2 { margin:0; font-size:20px; letter-spacing:-.03em; }
+        .card-header p { margin:4px 0 0; color:#64748b; font-size:13px; font-weight:800; }
+        .status { flex:0 0 auto; padding:7px 10px; border-radius:999px; font-size:11px; font-weight:950; background:#e0f2fe; color:#0369a1; }
+        .status.approved_by_client,.status.sent_to_hiring { background:#dcfce7; color:#166534; }
+        .status.rejected_by_client { background:#fee2e2; color:#991b1b; }
+        .info { display:grid; gap:7px; color:#334155; font-size:13px; font-weight:750; margin-bottom:14px; }
+        .resume-link { display:inline-flex; width:fit-content; margin-top:6px; padding:10px 14px; border-radius:12px; background:#2563eb; color:#fff; font-weight:900; text-decoration:none; }
+        .resume-unavailable { display:inline-flex; width:fit-content; padding:9px 12px; border-radius:12px; background:#f1f5f9; color:#64748b; font-size:13px; font-weight:800; }
+        .ai-box { padding:14px; border:1px solid #bfdbfe; border-radius:18px; background:linear-gradient(135deg,#eff6ff,#fff); margin-bottom:14px; }
+        .ai-head { display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+        .ai-head > div:first-child { display:grid; gap:3px; }
+        .ai-head span { color:#2563eb; font-size:12px; font-weight:900; }
+        .ai-head strong { font-size:20px; }
+        .score-row { display:flex; gap:8px; flex-wrap:wrap; }
+        .score-row small { padding:6px 8px; background:#fff; border:1px solid #dbeafe; border-radius:10px; }
+        .ai-summary { color:#334155; line-height:1.55; font-size:13px; }
+        .profile-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; margin:10px 0; }
+        .profile-item { background:#fff; border:1px solid #e2e8f0; border-radius:10px; padding:9px; display:grid; gap:3px; }
+        .profile-item span { color:#64748b; font-size:11px; }
+        .profile-item strong { font-size:13px; }
+        .dimensions { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:7px; margin:10px 0; }
+        .dimensions div { display:flex; justify-content:space-between; gap:8px; background:#fff; border-radius:9px; padding:8px; font-size:11px; text-transform:capitalize; }
+        .evidence { background:#f0fdf4; border-radius:10px; padding:10px; margin-top:8px; color:#166534; font-size:12px; }
+        .evidence.attention { background:#fffbeb; color:#92400e; }
+        .evidence p { margin:4px 0; line-height:1.4; }
+        .ai-disclaimer { display:block; color:#64748b; line-height:1.4; margin-top:10px; }
+        .notes { padding:12px; border-radius:18px; background:#f8fafc; border:1px solid #e2e8f0; margin-bottom:12px; }
+        .notes strong { font-size:12px; }
+        .notes p { margin:6px 0 0; color:#475569; font-size:13px; line-height:1.5; white-space:pre-wrap; }
+        textarea { width:100%; min-height:88px; resize:vertical; border:1px solid #cbd5e1; border-radius:18px; padding:12px; font:inherit; font-size:14px; outline:none; box-sizing:border-box; }
+        .actions { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:12px; }
+        button { border:0; border-radius:16px; padding:12px 14px; font-weight:950; cursor:pointer; }
+        button:disabled { cursor:not-allowed; opacity:.5; }
+        .approve { background:#16a34a; color:#fff; }
+        .reject { background:#ef4444; color:#fff; }
+        @media(max-width:640px){ .client-page{padding:14px}.grid{grid-template-columns:1fr}.actions,.profile-grid,.dimensions{grid-template-columns:1fr}.card-header{display:grid} }
       `}</style>
     </main>
   );
+}
+
+function Info({ label, value }: { label: string; value: any }) {
+  return <div className="profile-item"><span>{label}</span><strong>{value || "—"}</strong></div>;
 }

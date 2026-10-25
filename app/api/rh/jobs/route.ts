@@ -56,6 +56,24 @@ function parseSkills(value: unknown) {
     .filter(Boolean);
 }
 
+function parseLines(value: unknown) {
+  if (Array.isArray(value)) {
+    return value
+      .map((item: any) => typeof item === "string" ? item : item?.prompt)
+      .map((item: any) => String(item || "").trim())
+      .filter(Boolean);
+  }
+
+  return String(value || "")
+    .split(/\r?\n/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function cleanBoolean(value: unknown) {
+  return value === true || value === "true" || value === 1 || value === "1";
+}
+
 function buildJobPayload(body: any, companyId: string, branchId?: string | null) {
   const skillsRequired = parseSkills(body.skillsRequired);
   const languagesRequired = parseSkills(body.languagesRequired);
@@ -84,6 +102,35 @@ function buildJobPayload(body: any, companyId: string, branchId?: string | null)
   const courseArea = cleanText(body.courseArea);
   const studentYear = cleanText(body.studentYear);
   const experienceMode = cleanText(body.experienceMode) || "indiferente";
+
+  const existingAiInterview =
+    body.aiInterview && typeof body.aiInterview === "object"
+      ? body.aiInterview
+      : {};
+
+  const aiInterviewEnabled = cleanBoolean(
+    body.aiInterviewEnabled ?? existingAiInterview.enabled
+  );
+
+  const aiInterview = {
+    enabled: aiInterviewEnabled,
+    profile: cleanText(body.aiInterviewProfile ?? existingAiInterview.profile),
+    positiveSignals: cleanText(
+      body.aiInterviewPositiveSignals ?? existingAiInterview.positiveSignals
+    ),
+    attentionSignals: cleanText(
+      body.aiInterviewAttentionSignals ?? existingAiInterview.attentionSignals
+    ),
+    videoUrl: cleanText(body.aiInterviewVideoUrl ?? existingAiInterview.videoUrl),
+    questions: parseLines(
+      body.aiInterviewQuestionsText ?? existingAiInterview.questions
+    ),
+    publicToken:
+      cleanText(body.aiInterviewPublicToken ?? existingAiInterview.publicToken) ||
+      (aiInterviewEnabled ? crypto.randomUUID() : null),
+    mode: "adaptive-v1",
+    updatedAt: new Date().toISOString(),
+  };
 
   const baseRequirements = {
     text: cleanText(body.requirementsText),
@@ -221,6 +268,7 @@ function buildJobPayload(body: any, companyId: string, branchId?: string | null)
       processTime,
       updatedAt: new Date().toISOString(),
       matcherVersion: "zentra-rh-job-criteria-v2",
+      aiInterview,
     },
   };
 }
@@ -319,6 +367,7 @@ export async function POST(req: NextRequest) {
           meetLink: "",
           processDate: "",
           processTime: "",
+          aiInterviewPublicToken: "",
         },
         companyId,
         branchId || sourceJob.branch_id

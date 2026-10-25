@@ -63,6 +63,12 @@ type JobForm = {
   languagesRequired: string;
   ageMin: string;
   ageMax: string;
+  aiInterviewEnabled: string;
+  aiInterviewProfile: string;
+  aiInterviewPositiveSignals: string;
+  aiInterviewAttentionSignals: string;
+  aiInterviewVideoUrl: string;
+  aiInterviewQuestionsText: string;
 };
 
 type TeamUser = {
@@ -171,6 +177,12 @@ const emptyForm: JobForm = {
   languagesRequired: "",
   ageMin: "",
   ageMax: "",
+  aiInterviewEnabled: "false",
+  aiInterviewProfile: "",
+  aiInterviewPositiveSignals: "",
+  aiInterviewAttentionSignals: "",
+  aiInterviewVideoUrl: "",
+  aiInterviewQuestionsText: "",
 };
 
 const statusLabel: Record<string, string> = {
@@ -284,6 +296,18 @@ function joinList(value: any) {
   return String(value);
 }
 
+function getAiInterview(job: Job) {
+  const ai = job.aiCriteria && typeof job.aiCriteria === "object" ? job.aiCriteria : {};
+  return ai.aiInterview && typeof ai.aiInterview === "object" ? ai.aiInterview : {};
+}
+
+function getAiInterviewLink(job: Job) {
+  const config = getAiInterview(job);
+  const token = String(config.publicToken || "").trim();
+  if (!token || typeof window === "undefined") return "";
+  return `${window.location.origin}/entrevista/${token}`;
+}
+
 export default function JobsPage() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [stats, setStats] = useState({
@@ -306,6 +330,7 @@ export default function JobsPage() {
   const [filters, setFilters] = useState<KanbanFilters>(emptyFilters);
   const [draggingJobId, setDraggingJobId] = useState<string | null>(null);
   const [isFormCollapsed, setIsFormCollapsed] = useState(false);
+  const [generatingInterviewQuestions, setGeneratingInterviewQuestions] = useState(false);
 
   useEffect(() => {
     loadJobs();
@@ -598,6 +623,17 @@ export default function JobsPage() {
       languagesRequired: joinList(getJson(job, "languagesRequired")),
       ageMin: getJson(job, "ageMin") ? String(getJson(job, "ageMin")) : "",
       ageMax: getJson(job, "ageMax") ? String(getJson(job, "ageMax")) : "",
+      aiInterviewEnabled: getAiInterview(job).enabled ? "true" : "false",
+      aiInterviewProfile: String(getAiInterview(job).profile || ""),
+      aiInterviewPositiveSignals: String(getAiInterview(job).positiveSignals || ""),
+      aiInterviewAttentionSignals: String(getAiInterview(job).attentionSignals || ""),
+      aiInterviewVideoUrl: String(getAiInterview(job).videoUrl || ""),
+      aiInterviewQuestionsText: Array.isArray(getAiInterview(job).questions)
+        ? getAiInterview(job).questions
+            .map((item: any) => (typeof item === "string" ? item : item?.prompt || ""))
+            .filter(Boolean)
+            .join("\n")
+        : "",
     });
 
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -711,6 +747,18 @@ export default function JobsPage() {
         meetLink: getMeta(job, "meetLink") || "",
         processDate: getMeta(job, "processDate") || "",
         processTime: getMeta(job, "processTime") || "",
+        aiInterviewEnabled: getAiInterview(job).enabled ? "true" : "false",
+        aiInterviewProfile: getAiInterview(job).profile || "",
+        aiInterviewPositiveSignals: getAiInterview(job).positiveSignals || "",
+        aiInterviewAttentionSignals: getAiInterview(job).attentionSignals || "",
+        aiInterviewVideoUrl: getAiInterview(job).videoUrl || "",
+        aiInterviewQuestionsText: Array.isArray(getAiInterview(job).questions)
+          ? getAiInterview(job).questions
+              .map((item: any) => (typeof item === "string" ? item : item?.prompt || ""))
+              .filter(Boolean)
+              .join("\n")
+          : "",
+        aiInterviewPublicToken: getAiInterview(job).publicToken || "",
       }),
     });
 
@@ -895,6 +943,67 @@ export default function JobsPage() {
       window.location.href = `/crm/dashboard/candidates?matchJobId=${job.id}&matchIds=${encodeURIComponent(ids)}`;
     } finally {
       setMatchingJobId(null);
+    }
+  }
+
+
+  async function generateInterviewQuestions() {
+    if (!editingId) {
+      alert("Salve a vaga como rascunho primeiro. Depois clique em Editar para gerar o roteiro com IA.");
+      return;
+    }
+
+    if (!form.aiInterviewProfile.trim()) {
+      alert("Descreva o perfil que você quer encontrar antes de gerar o roteiro.");
+      return;
+    }
+
+    try {
+      setGeneratingInterviewQuestions(true);
+
+      const res = await fetch(`/api/rh/jobs/${editingId}/ai-interview/generate`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          profile: form.aiInterviewProfile,
+          positiveSignals: form.aiInterviewPositiveSignals,
+          attentionSignals: form.aiInterviewAttentionSignals,
+        }),
+      });
+
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        alert(data.error || "Erro ao gerar roteiro da entrevista.");
+        return;
+      }
+
+      const questions = Array.isArray(data.questions) ? data.questions : [];
+      setForm((current) => ({
+        ...current,
+        aiInterviewQuestionsText: questions
+          .map((item: any) => (typeof item === "string" ? item : item?.prompt || ""))
+          .filter(Boolean)
+          .join("\n"),
+      }));
+    } finally {
+      setGeneratingInterviewQuestions(false);
+    }
+  }
+
+  async function copyInterviewLink(job: Job) {
+    const link = getAiInterviewLink(job);
+    if (!link) {
+      alert("Esta vaga ainda não possui link de entrevista. Ative a Entrevista por IA e salve a vaga.");
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(link);
+      alert("Link da entrevista copiado.");
+    } catch {
+      prompt("Copie o link da entrevista:", link);
     }
   }
 
@@ -1133,6 +1242,100 @@ export default function JobsPage() {
             Critérios adicionais para matching
             <textarea style={{ ...styles.input, minHeight: 95 }} value={form.requirementsText} onChange={(e) => updateForm("requirementsText", e.target.value)} placeholder="Ex: perfil comunicativo, mora próximo, disponibilidade aos sábados, estágio em administração..." />
           </label>
+
+          <div style={{ gridColumn: "1 / -1", border: "1px solid #dbeafe", borderRadius: 18, padding: 18, background: "#f8fbff", display: "grid", gap: 14 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
+              <div>
+                <strong style={{ fontSize: 16 }}>🤖 Entrevista Inteligente por IA</strong>
+                <p style={{ ...styles.smallText, margin: "4px 0 0" }}>
+                  Ative somente nas vagas em que o candidato fará a pré-entrevista online.
+                </p>
+              </div>
+
+              <label style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 800, cursor: "pointer" }}>
+                <input
+                  type="checkbox"
+                  checked={form.aiInterviewEnabled === "true"}
+                  onChange={(e) => updateForm("aiInterviewEnabled", e.target.checked ? "true" : "false")}
+                />
+                Usar entrevista por IA
+              </label>
+            </div>
+
+            {form.aiInterviewEnabled === "true" && (
+              <>
+                <label style={styles.label}>
+                  Vídeo de apresentação da empresa / vaga
+                  <input
+                    style={styles.input}
+                    value={form.aiInterviewVideoUrl}
+                    onChange={(e) => updateForm("aiInterviewVideoUrl", e.target.value)}
+                    placeholder="YouTube, Vimeo ou link público do vídeo"
+                  />
+                </label>
+
+                <label style={styles.label}>
+                  Perfil que eu quero encontrar
+                  <textarea
+                    style={{ ...styles.input, minHeight: 120 }}
+                    value={form.aiInterviewProfile}
+                    onChange={(e) => updateForm("aiInterviewProfile", e.target.value)}
+                    placeholder="Descreva em linguagem natural o perfil ideal, rotina real da vaga, desafios, autonomia, metas, comunicação e o que diferencia quem tende a performar bem."
+                  />
+                </label>
+
+                <label style={styles.label}>
+                  Sinais positivos que a IA deve procurar
+                  <textarea
+                    style={{ ...styles.input, minHeight: 90 }}
+                    value={form.aiInterviewPositiveSignals}
+                    onChange={(e) => updateForm("aiInterviewPositiveSignals", e.target.value)}
+                    placeholder="Ex: histórico com metas, prospecção, disciplina em home office, autonomia, persistência comercial..."
+                  />
+                </label>
+
+                <label style={styles.label}>
+                  Pontos profissionais de atenção
+                  <textarea
+                    style={{ ...styles.input, minHeight: 90 }}
+                    value={form.aiInterviewAttentionSignals}
+                    onChange={(e) => updateForm("aiInterviewAttentionSignals", e.target.value)}
+                    placeholder="Ex: não aceita modelo PJ, exige salário fixo, não possui disponibilidade, não quer prospecção..."
+                  />
+                </label>
+
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                  <button
+                    type="button"
+                    style={styles.secondaryButton}
+                    disabled={!editingId || generatingInterviewQuestions}
+                    onClick={generateInterviewQuestions}
+                  >
+                    {generatingInterviewQuestions ? "Gerando roteiro..." : "✨ Gerar perguntas com IA"}
+                  </button>
+                  {!editingId && (
+                    <span style={{ ...styles.smallText, alignSelf: "center" }}>
+                      Salve como rascunho primeiro para gerar o roteiro.
+                    </span>
+                  )}
+                </div>
+
+                <label style={styles.label}>
+                  Roteiro base da entrevista
+                  <textarea
+                    style={{ ...styles.input, minHeight: 180 }}
+                    value={form.aiInterviewQuestionsText}
+                    onChange={(e) => updateForm("aiInterviewQuestionsText", e.target.value)}
+                    placeholder={"Uma pergunta por linha. A IA poderá adaptar perguntas de aprofundamento ao currículo e às respostas do candidato."}
+                  />
+                </label>
+
+                <div style={{ padding: 12, borderRadius: 12, background: "#fff", border: "1px solid #e2e8f0", fontSize: 13, color: "#475569", lineHeight: 1.55 }}>
+                  A análise final usa somente informações profissionais e respostas relacionadas à vaga. Não deve inferir saúde mental, situação familiar, religião, raça, orientação sexual, condição médica ou outras características sensíveis.
+                </div>
+              </>
+            )}
+          </div>
             </div>
 
             <div style={styles.actionRow}>
@@ -1362,6 +1565,19 @@ export default function JobsPage() {
                           <button style={styles.secondaryButton} onClick={() => editJob(job)}>
                             Editar
                           </button>
+                          {getAiInterview(job).enabled && (
+                            <>
+                              <button style={styles.secondaryButton} onClick={() => copyInterviewLink(job)}>
+                                Copiar entrevista IA
+                              </button>
+                              <a
+                                style={{ ...styles.secondaryButton, textDecoration: "none", display: "inline-flex", alignItems: "center" }}
+                                href={`/crm/dashboard/jobs/${job.id}/ai-interview`}
+                              >
+                                Resultados IA
+                              </a>
+                            </>
+                          )}
 
                           <button
                             style={styles.secondaryButton}
