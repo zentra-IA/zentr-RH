@@ -4,7 +4,19 @@ import { useEffect, useMemo, useState } from "react";
 import ClientInterviewMedia from "@/components/ai-interview/ClientInterviewMedia";
 import { useParams } from "next/navigation";
 
+type ManualAttachment = {
+  name?: string | null;
+  url?: string | null;
+  mediaType?: string | null;
+  mimeType?: string | null;
+  size?: number | null;
+};
+
 type Candidate = {
+  attachments?: ManualAttachment[] | null;
+  meeting_url?: string | null;
+  interview_notes?: string | null;
+  manual_notes?: string | null;
   id: string;
   candidate_name: string;
   candidate_phone?: string | null;
@@ -149,6 +161,8 @@ export default function PublicCandidatePresentationPage() {
                 ) : null}
               </div>
 
+              <ManualInterviewFiles attachments={candidate.attachments} />
+
               <ClientInterviewMedia token={token} memberId={candidate.id} />
 
               {candidate.ai_overall_score != null && (
@@ -205,10 +219,10 @@ export default function PublicCandidatePresentationPage() {
                 </section>
               )}
 
-              {candidate.rh_notes && (
+              {(candidate.rh_notes || candidate.interview_notes || candidate.manual_notes) && (
                 <div className="notes">
-                  <strong>Observação do RH</strong>
-                  <p>{candidate.rh_notes}</p>
+                  <strong>Observação da entrevista — RH</strong>
+                  <p>{candidate.rh_notes || candidate.interview_notes || candidate.manual_notes}</p>
                 </div>
               )}
 
@@ -277,6 +291,84 @@ export default function PublicCandidatePresentationPage() {
         @media(max-width:640px){ .client-page{padding:14px}.grid{grid-template-columns:1fr}.actions,.profile-grid,.dimensions{grid-template-columns:1fr}.card-header{display:grid} }
       `}</style>
     </main>
+  );
+}
+
+
+function validAttachmentUrl(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const url = value.trim();
+  if (!url || url.length > 4096) return null;
+  if (url.startsWith("/") && !url.startsWith("//") && !url.startsWith("/\\")) {
+    return url;
+  }
+  try {
+    const parsed = new URL(url);
+    return ["https:", "http:"].includes(parsed.protocol) ? parsed.href : null;
+  } catch {
+    return null;
+  }
+}
+
+function attachmentKind(item: ManualAttachment): "image" | "audio" | "video" | "file" {
+  const hint = `${item.mediaType || ""} ${item.mimeType || ""} ${item.name || ""}`.toLowerCase();
+  if (/(^|[\/\s.])(jpg|jpeg|png|webp|gif|image)(\/|$|\s)/.test(hint)) return "image";
+  if (/(^|[\/\s.])(mp3|wav|ogg|oga|m4a|aac|audio)(\/|$|\s)/.test(hint)) return "audio";
+  if (/(^|[\/\s.])(mp4|mov|webm|video)(\/|$|\s)/.test(hint)) return "video";
+  return "file";
+}
+
+function ManualInterviewFiles({
+  attachments,
+}: {
+  attachments?: ManualAttachment[] | null;
+}) {
+  const files = (Array.isArray(attachments) ? attachments : [])
+    .map((item, index) => ({
+      id: `${index}-${item?.name || "arquivo"}`,
+      url: validAttachmentUrl(item?.url),
+      name: String(item?.name || `Anexo ${index + 1}`),
+      kind: attachmentKind(item),
+    }))
+    .filter((item): item is {id: string;url: string;name: string;kind: "image" | "audio" | "video" | "file"} => Boolean(item.url));
+
+  if (!files.length) return null;
+
+  return (
+    <section style={{padding: 14, marginBottom: 14, borderRadius: 18, border: "1px solid #dbeafe", background: "#f8fbff"}}>
+      <h3 style={{fontSize: 14, fontWeight: 900, color: "#1e40af", margin: "0 0 4px"}}>📎 Arquivos enviados pelo RH</h3>
+      <p style={{margin: "0 0 12px", fontSize: 12, color: "#64748b"}}>Documentos e gravações anexados durante a entrevista manual.</p>
+      <div style={{display: "grid", gap: 10}}>
+        {files.map((file) => (
+          <div style={{background: "#fff", border: "1px solid #dbeafe", borderRadius: 12, padding: 10, minWidth: 0}} key={file.id}>
+            <div style={{display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap"}}>
+              <span style={{color: "#0f172a", fontSize: 13, fontWeight: 800, overflowWrap: "anywhere"}}>{file.name}</span>
+              <a
+                style={{textDecoration: "none", background: "#2563eb", color: "#fff", padding: "8px 11px", borderRadius: 9, fontSize: 12, fontWeight: 900, whiteSpace: "nowrap"}}
+                href={file.url}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                Abrir arquivo
+              </a>
+            </div>
+            {file.kind === "image" && (
+              <img style={{display: "block", width: "100%", maxHeight: 270, objectFit: "contain", borderRadius: 10, marginTop: 10, background: "#f8fafc"}} src={file.url} alt={file.name} loading="lazy" />
+            )}
+            {file.kind === "audio" && (
+              <audio style={{width: "100%", marginTop: 10}} src={file.url} controls preload="none">
+                Seu navegador não suporta reprodução de áudio.
+              </audio>
+            )}
+            {file.kind === "video" && (
+              <video style={{display: "block", width: "100%", maxHeight: 270, borderRadius: 10, marginTop: 10, background: "#f8fafc"}} src={file.url} controls preload="none">
+                Seu navegador não suporta reprodução de vídeo.
+              </video>
+            )}
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }
 
